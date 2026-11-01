@@ -1,6 +1,6 @@
-# NUFE-Local
+# nufe-schedule
 
-NUFE-Local 是面向南京财经大学学生的 iPhone 本地课表同步工具。项目通过学校统一身份认证和教务系统获取课程信息，并将课程写入 Apple 日历。依托 Scripting 与 iOS 快捷指令运行，无需自行部署服务器或保持电脑在线。
+nufe-schedule 是面向南京财经大学学生的 iPhone 本地课表同步工具。项目通过学校统一身份认证和教务系统获取课程信息，并将课程写入 Apple 日历。依托 Scripting 与 iOS 快捷指令运行，无需自行部署服务器或保持电脑在线。
 
 > 本项目为非官方工具，与南京财经大学不存在官方隶属关系。学校接口、身份认证流程及 iOS 后台执行行为可能发生变化。
 
@@ -25,12 +25,12 @@ NUFE-Local 是面向南京财经大学学生的 iPhone 本地课表同步工具�
 在 Scripting 中通过以下固定 ZIP 地址导入项目，或将仓库内的 `index.tsx`、`intent.tsx` 和 `script.json` 加入同名项目：
 
 ```text
-https://raw.githubusercontent.com/b7f2d/NUFE-Local/main/NUFE-Local.zip
+https://raw.githubusercontent.com/b7f2d/nufe-schedule/main/nufe-schedule.zip
 ```
 
-首次使用前，请在 Apple 日历中创建一个独立、可写的日历，例如“南财课表”，建议将其存储在 iCloud。**该日历仅用于本工具同步的课程，不要混放私人日程。** 项目在核验新课程后可能清理绑定日历中的旧内容。
+首次使用前，请在 Apple 日历中创建一个独立、可写的日历，名称为“课表”，建议将其存储在 iCloud。已使用本工具的用户应直接重命名现有日历，而不是删除后重新创建。**该日历仅用于本工具同步的课程，不要混放私人日程。** 项目在核验新课程后可能清理绑定日历中的旧内容。
 
-随后在 Scripting 中打开 `NUFE-Local`，运行 `index.tsx`，按提示授予权限、绑定专用日历并完成学校登录。在管理菜单中选择“立即刷新”，核对导入的课程日期、时间和地点。
+随后在 Scripting 中打开 `nufe-schedule`，运行 `index.tsx`，按提示授予权限、绑定专用日历并完成学校登录。在管理菜单中选择“立即刷新”，核对导入的课程日期、时间和地点。
 
 首次同步可能需要补充某些学期的第一教学周日期。无法确认的日期不会被自动推测，以避免课程整体错位。
 
@@ -45,7 +45,7 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Local/main/NUFE-Local.zip
 ### 快捷指令自动同步
 
 1. 打开 iOS **快捷指令**，添加 **Scripting → 运行意图脚本**。
-2. 选择 `NUFE-Local`，其他参数保持空白。
+2. 选择 `nufe-schedule`，其他参数保持空白。
 3. 先手动运行一次，确认同步成功。
 4. 在“自动化”中设置所需触发时间，并选择“立即运行”。
 
@@ -55,15 +55,15 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Local/main/NUFE-Local.zip
 
 ## 远程更新
 
-项目使用固定的 GitHub 分支地址作为远程来源：
+项目使用固定 ZIP 下载地址作为远程来源。更新仓库代码后应同步重新生成该 ZIP：
 
 ```text
-https://github.com/b7f2d/NUFE-Local/tree/main
+https://raw.githubusercontent.com/b7f2d/nufe-schedule/main/nufe-schedule.zip
 ```
 
 在 Scripting 中为项目关联远程来源后，可使用其提供的更新功能获取仓库中的最新文件。远程更新由 Scripting 管理，不保证 GitHub 提交后立即在设备上生效。
 
-建议在现有项目中更新文件，避免删除项目后重新导入造成本地凭据或日历绑定信息丢失。更新后可分别手动测试管理界面与后台同步。
+已有用户应优先更新原 Scripting 项目，再重命名为 `nufe-schedule`，并在快捷指令中重新选择项目。请保留原课表日历和本机状态。原有日历继续按内部 ID 识别，前台打开项目时会尝试将其名称改为“课表”；若修改失败，可在 Apple 日历中手动更名。更新后可分别手动测试管理界面与后台同步。
 
 ## 数据与隐私
 

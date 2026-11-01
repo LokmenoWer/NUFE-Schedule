@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: management, multi-semester sync, room-only location, visible notes and verified duplicate cleanup.
+// Modified 2026-11-02: management, multiple semesters, simplified notes, verified duplicate cleanup, and safe calendar rename.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -10,7 +10,7 @@ async function __NUFE_REPORT_STARTUP(error){
   const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
   console.error('[NUFE v2.1.0] '+known+' · '+__NUFE_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
-  catch(_){try{await api('Notification').schedule({title:'南财课表 · 启动失败',body:message,silent:true});}catch(__){}}
+  catch(_){try{await api('Notification').schedule({title:'NUFE 课表 · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
 }
 async function __NUFE_START(){
@@ -18,7 +18,7 @@ async function __NUFE_START(){
     console.log('[NUFE v2.1.0] 正在启动');
 // @ts-nocheck
 
-// NUFE-Local Scripting v2.1.0. Foreground opens management; intent runs sync.
+// nufe-schedule: foreground management and background shortcut synchronization.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
@@ -86,7 +86,7 @@ class WebView{
  set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
  async loadHTML(html){if(!await this.inner.loadHTML(html))throw Error('WebView load failed');}
  async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
- async present(){await this.inner.present({navigationTitle:'南财官方验证'});}
+ async present(){await this.inner.present({navigationTitle:'NUFE 官方验证'});}
 }
 class Notification{
  constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;this.triggerDate=null;}
@@ -114,8 +114,8 @@ const ShareSheet={present:paths=>hostAPI('DocumentPicker').exportFiles({files:pa
 // NUFE Local Scripting v2.0 (native Scripting adapter + verified calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
 // upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
 // No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* NUFE-Local 使用摘要：Scripting 入口 index.tsx；默认直接同步，mode=menu 显示管理菜单。
- * 快捷指令打开 scripting://run_single/NUFE-Local；无需参数，直接同步。新增、调整、停课自动同步；删除本工具事件前本地备份，最后仅报告成功/失败。
+/* nufe-schedule 使用摘要：Scripting 入口 index.tsx；默认直接同步，mode=menu 显示管理菜单。
+ * 快捷指令打开 scripting://run_single/nufe-schedule；无需参数，直接同步。新增、调整、停课自动同步；删除本工具事件前本地备份，最后仅报告成功/失败。
  * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
  * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
  * 系列删除可能影响范围外的同系列课程，但不会跨日历；RRULE/提醒无法完整备份。
@@ -534,8 +534,8 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   }
   const method=new Alert();method.title='选择学校登录方式';method.addAction('学号密码');method.addAction('学校扫码');method.addCancelAction('取消');const choice=await method.presentSheet();if(choice<0)fail('CANCELLED');if(choice===1){await qrLogin(http,r);const page=await http.get(TABLE);pageInfo(page.text);return page.text;}
   onStage('等待输入学校登录信息');
-  const username=(await input('南财官方统一身份认证','学号（只发送给学校）')).trim();
-  const password=await input('南财官方统一身份认证','密码（仅本次使用；不会自动保存）',true);
+  const username=(await input('NUFE 统一身份认证','学号（只发送给学校）')).trim();
+  const password=await input('NUFE 统一身份认证','密码（仅本次使用；不会自动保存）',true);
   const page=await passwordLogin(http,r,username,password,true,onStage);
   if(!hasSavedCredentials()&&await confirm('在本机保存自动登录凭据？','可选：将学号和密码保存在本脚本的设备本地 Keychain，Cookie 失效时自动重登。不启用 iCloud 同步，不写入普通文件；取消不保存。'))saveCredentials(username,password);
   return page;
@@ -682,14 +682,14 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
 
 function fingerprint(events){return JSON.stringify(events.map(({id,...e})=>e));}
 function deletionReady(previous,events,now){return previous&&previous.signature===fingerprint(events)&&now-previous.at>=5*60000;}
-async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='南财课表';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
+async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='NUFE 课表';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
 
 // Session invalidation is known only after a school's request redirects to auth.
 // Deduplicate the alert for this expired session: each scheduled run must not nag.
 async function notifyAuthExpiredOnce(state,store) {
   if(state.authExpiryNotifiedAt)return false;
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
-  n.title='南财课表 · 登录已失效';
+  n.title='NUFE 课表 · 登录已失效';
   const code=state.lastError;
   n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表已保留，请打开 Scripting 手动验证。':
     code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表已保留，请在 Scripting 中更新凭据。':
@@ -704,7 +704,7 @@ async function notifyAuthExpiredOnce(state,store) {
 }
 async function testAuthNotification() {
   const n=new Notification();n.identifier='nufe-local-auth-test';
-  n.title='南财课表 · 通知测试';
+  n.title='NUFE 课表 · 通知测试';
   n.body='这是一条测试通知。学校会话失效后，定时同步会提醒你手动重新登录。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
@@ -860,7 +860,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',QR_EXPIRED:'二维码已过期或未确认，请重新运行。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求的二次认证不是短信或动态口令，本版不能转发；请改用扫码登录，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「南财课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',QR_EXPIRED:'二维码已过期或未确认，请重新运行。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求的二次认证不是短信或动态口令，本版不能转发；请改用扫码登录，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -905,7 +905,7 @@ const ERROR_GUIDE={
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
   CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','在「账号与日历设置」选择「重新绑定课表日历」，不要删除原日历。'],
   CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」。'],
-  CALENDAR_NOT_VISIBLE:['没有找到可写入的「南财课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
+  CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
   BUSY:['同步锁显示可能有另一项同步正在进行，也可能是上次异常退出留下的锁。','避免同时运行两个任务；异常退出留下的正常锁在 20 分钟后会自动过期。'],
   LOCK_LOST:['运行过程中同步锁失效，程序为防止重复写入主动停止。','检查是否有两个同时运行的任务，停止自动化后检查同步锁。'],
   STATE_CORRUPT:['本地状态文件无法通过校验，不能安全恢复以前的同步进度。','不要清理状态目录或删除日历；先备份文件并检查。'],
@@ -964,31 +964,49 @@ async function containsManagedEvent(calendar,state){
   for(const e of examples){
     const lo=new Date(Date.parse(e.start)-DAY),hi=new Date(Date.parse(e.end)+DAY);
     const list=await CalendarEvent.between(lo,hi,[calendar]);
-    if(list.some(ev=>typeof ev.notes==='string'&&ev.notes.startsWith('[NUFE_LOCAL_V1 '+state.owner+' ')))return true;
+    if(list.some(ev=>!!eventRecord(ev,state.owner,storedEventIndex(state))))return true;
   }
   return false;
+}
+// Preserve the bound calendar identifier; do not create a replacement calendar.
+async function alignBoundCalendarName(calendar,state,store){
+  let current=calendar;
+  if(config.runsInApp&&String(calendar.title||'').trim()==='南财课表'&&typeof calendar.save==='function'){
+    try{
+      calendar.title='课表';
+      await calendar.save();
+      current=(await visibleCalendars()).find(c=>c.identifier===calendar.identifier)||calendar;
+    }catch(_){
+      // If the calendar account does not allow renaming, retain the binding.
+      try{current=(await visibleCalendars()).find(c=>c.identifier===calendar.identifier)||calendar;}catch(__){}
+    }
+  }
+  if(state.calendarTitle!==current.title){state.calendarTitle=current.title;store.write(state);}
+  return current;
 }
 async function pickCalendar(state,store,force=false){
   const all=await visibleCalendars();
   const exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
-  if(exact&&!force)return exact;
+  if(exact&&!force)return await alignBoundCalendarName(exact,state,store);
   // A changed calendar ID is NEVER silently adopted in background automation.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  const candidates=all.filter(c=>liveCalendar(c)&&c.title.trim()==='南财课表');
+  // Allow the old title during migration, but prefer the new name.
+  let candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
+  if(!candidates.length)candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='南财课表');
   assert(candidates.length,'CALENDAR_NOT_VISIBLE');
   let picked;
   if(candidates.length===1){
     picked=candidates[0];
     if(!await confirm('绑定目标日历',
-       '检测到唯一一个可编辑的「南财课表」。'+
+       '检测到唯一一个可编辑的「课表」日历（或尚未更名的旧日历）。'+
        (state.calendarId&&state.calendarId!==picked.identifier?'\n原日历 ID 与当前不一致，需要重新绑定。':'')+
        '\n专用课表日历模式：新教务数据写入核验后，会自动备份并删除该日历中的旧导入内容（含循环系列）。此日历必须只放可替换的课表；不会操作其他日历。'))fail('CANCELLED');
   }else{
-    await notice('请选择准确的目标日历','检测到多个同名日历。请只选择你之前创建的「南财课表」。如无法区分，先取消，避免写入错误日历。');
+    await notice('请选择准确的目标日历','检测到多个同名日历。请选择原来用于课表同步的同一个日历。如无法区分，请取消以免写入错误日历。');
     const selected=await Calendar.presentPicker(false);
     picked=Array.isArray(selected)?selected[0]:null;
     assert(picked&&candidates.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
-    if(!await confirm('确认日历','已选择「'+picked.title+'」。确认此日历就是之前的南财课表？'))fail('CANCELLED');
+    if(!await confirm('确认日历','已选择「'+picked.title+'」。确认这是原来绑定的课表专用日历？'))fail('CANCELLED');
   }
   if(state.calendarId&&state.calendarId!==picked.identifier){
     // Prevent continuing a partially applied transaction in a different calendar.
@@ -997,7 +1015,7 @@ async function pickCalendar(state,store,force=false){
   }
   state.calendarId=picked.identifier;state.calendarTitle=picked.title;
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
-  store.write(state);return picked;
+  store.write(state);return await alignBoundCalendarName(picked,state,store);
 }
 async function repairSyncLock(store){
   const p=store.path('run-lock.json');
@@ -1305,7 +1323,7 @@ async function widget(store) {
   if(mode==='current')selected=events.filter(e=>Date.parse(e.start)<=now&&Date.parse(e.end)>now);
   if(mode==='next')selected=events.filter(e=>Date.parse(e.start)>now).slice(0,1);
   const family=config.widgetFamily||'medium',small=family.startsWith('accessory');
-  w.addText('南财 · '+(mode==='week'?'本周':mode==='tomorrow'?'明天':mode==='next'?'下一节':mode==='current'?'当前':'今天')).font=Font.boldSystemFont(small?12:15);
+  w.addText('NUFE · '+(mode==='week'?'本周':mode==='tomorrow'?'明天':mode==='next'?'下一节':mode==='current'?'当前':'今天')).font=Font.boldSystemFont(small?12:15);
   for(const e of selected.slice(0,small?1:family==='large'?9:3)){if(!small)w.addSpacer(5);w.addText((Date.parse(e.start)<=now&&Date.parse(e.end)>now?'● ':'')+localDateTime(e.start).slice(mode==='week'?5:11)+' '+e.title).font=Font.systemFont(small?11:13);if(!small)w.addText(e.location).font=Font.systemFont(11);}
   if(!selected.length)w.addText('此范围暂无课程');
   if(!small){w.addSpacer();const success=Object.values(state.semesters).map(s=>s.lastSuccess).filter(Boolean).sort()[0];w.addText(state.tx?'同步待恢复':!success||now-Date.parse(success)>2*DAY?'课表可能过期，点按刷新':'仅本地缓存').font=Font.systemFont(10);}
@@ -1325,8 +1343,8 @@ async function manageSavedCredentials(state,store){
   menu.addCancelAction('关闭');
   const choice=await menu.presentSheet();if(choice<0)return;
   if(choice===0){
-    const user=(await input('保存到本机 Keychain','南财学号')).trim();
-    const pass=await input('保存到本机 Keychain','南财密码（安全输入）',true);
+    const user=(await input('保存到本机 Keychain','NUFE 学号')).trim();
+    const pass=await input('保存到本机 Keychain','NUFE 密码（安全输入）',true);
     if(!await confirm('确认启用自动登录',
       '学号和密码将保存在 Scripting 的 iOS Keychain 中，不写入脚本、日历、日志或普通文件。仅通过 HTTPS 向南京财经大学官方认证域名提交。\n\n注意：Scripting 按脚本隔离 Keychain，凭据不启用 iCloud 同步；若学校要求验证码或二次认证，仍须手动完成。\n\n确定保存？'))return;
     saveCredentials(user,pass);
@@ -1340,7 +1358,7 @@ async function manageSavedCredentials(state,store){
   }
 }
 async function refreshResult(ok,code=null){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'南财课表 · 部分完成':'南财课表 · 刷新'+(ok?'成功':'失败');
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'NUFE 课表 · 部分完成':'NUFE 课表 · 刷新'+(ok?'成功':'失败');
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
@@ -1356,7 +1374,7 @@ async function run() {
   try {
     if(interactive&&!firstSetup){
       state=store.read();
-      const menu=new Alert();menu.title='南财本地课表';
+      const menu=new Alert();menu.title='NUFE 课表';
       menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       ['立即刷新','账号与日历设置','运行状态'].forEach(x=>menu.addAction(x));menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
@@ -1397,7 +1415,7 @@ async function run() {
     await synchronize(state,store,calendar,interactive,interactive,progress);
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
     if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await refreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null);
-    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：南财课表已更新并核验。');
+    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(state&&locked){
