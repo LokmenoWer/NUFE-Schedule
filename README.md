@@ -1,8 +1,8 @@
 # NUFE-Schedule
 
-NUFE-Schedule 是面向NUFE学生的 iPhone 本地课表同步工具。项目通过学校统一身份认证和教务系统获取课程信息，并将课程写入 Apple 日历。依托 Scripting 与 iOS 快捷指令运行，无需自行部署服务器或保持电脑在线。
+NUFE-Schedule 是面向 NUFE 学生的 iPhone 本地课表同步工具。项目通过学校统一身份认证和教务系统获取课程信息，并将课程写入 Apple 日历。依托 Scripting 与 iOS 快捷指令运行，无需自行部署服务器或保持电脑在线。
 
-> 本项目为非官方工具，与NUFE不存在官方隶属关系。学校接口、身份认证流程及 iOS 后台执行行为可能发生变化。
+> 本项目为非官方工具，与 NUFE 不存在官方隶属关系。学校接口、身份认证流程及 iOS 后台执行行为可能发生变化。
 
 ## 主要功能
 
@@ -20,13 +20,13 @@ NUFE-Schedule 是面向NUFE学生的 iPhone 本地课表同步工具。项目通
 
 - iPhone，已安装 [Scripting](https://scriptingapp.github.io/)。
 - 已启用 Apple 日历，并允许 Scripting 访问日历和发送通知。
-- 能够访问NUFE统一身份认证系统及教务系统的网络环境。
+- 能够访问 NUFE 统一身份认证系统及教务系统的网络环境。
 
 ## 安装
 
 在 Scripting 中通过以下固定 ZIP 地址导入项目，或将仓库内的 `index.tsx`、`intent.tsx` 和 `script.json` 加入同名项目：
 
-**固定 Release 下载地址（无需版本号）**：
+**安装包下载地址：**
 
 ```text
 https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip
@@ -61,13 +61,13 @@ https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zi
 
 ## 远程更新
 
-项目使用单个固定 Release 的 ZIP 附件作为远程来源。后续提交到 `main` 并通过自动测试，就会覆盖已有附件：
+项目通过固定的 GitHub Release 地址提供安装包。主分支更新并通过自动化测试后，发行文件将同步更新：
 
 ```text
 https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip
 ```
 
-在 Scripting 中为项目关联上述固定 Release 来源后，可使用其提供的更新功能获取最新文件。此前已使用仓库 Raw URL 的用户，可将远程来源改为此地址；**原 Raw URL 保留兼容，但未来代码改动可能只更新 Release 附件，不再同步根目录旧 ZIP**。远程更新由 Scripting 管理，不保证 GitHub 提交后立即在设备上生效。
+在 Scripting 中为项目关联上述固定 Release 来源后，可使用其提供的更新功能获取最新文件。此前已使用仓库 Raw URL 的用户，可将远程来源改为此地址；**原 Raw URL 暂时保留以兼容历史安装，但该地址可能不再随项目代码更新**。远程更新由 Scripting 管理，不保证 GitHub 提交后立即在设备上生效。
 
 已有用户应优先在现有 Scripting 项目内更新，再将项目名称改为 `NUFE-Schedule`，并在快捷指令中重新选择项目。请保留原课表日历和本机状态。原有日历继续按内部 ID 识别，前台打开项目时会尝试将其名称改为“课表”；若修改失败，可在 Apple 日历中手动更名。更新后可分别手动测试管理界面与后台同步。
 
@@ -83,9 +83,9 @@ https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zi
 - 仅操作用户明确绑定的课表专用日历，不会主动清理其他日历。
 - 涉及重复课程和旧内容清理时，先写入并核验新课程，再尝试清理旧内容。日历备份无法保证完整恢复所有循环规则、提醒和邀请信息。
 
-## 自动测试与版本发布
+## 持续集成与发布
 
-GitHub Actions 在 PR 与 main 分支自动测试。每次 `main` 更新且测试通过后，会自动更新同一个 **NUFE-Schedule** Release 的 `NUFE-Schedule.zip` 附件；不使用递增版本号或要求手动创建版本标签。GitHub 要求 Release 关联 Tag，因此内部固定使用 `stable`，不会改名。详情见 [工程化说明](docs/engineering.md)。
+项目使用 GitHub Actions 执行自动化测试与安装包构建。主分支更新并通过测试后，系统将更新同一个 **NUFE-Schedule** Release 中的安装文件，并同步维护正式的 [发行说明](docs/release-notes.md)。发行文件名称及下载地址保持不变。有关发布机制与技术决策，请参阅 [工程化说明](docs/engineering.md)。
 
 ## 测试
 

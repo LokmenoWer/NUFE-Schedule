@@ -20,7 +20,7 @@ jobs:
         run: node --test tests/*.test.cjs
       - name: Package stable-name Scripting ZIP
         run: bash scripts/package.sh
-      - name: Replace the single stable Release asset
+      - name: Publish and document the stable distribution
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -29,10 +29,10 @@ jobs:
           archive="dist/NUFE-Schedule.zip"
           if gh release view "$release_tag" >/dev/null 2>&1; then
             gh release upload "$release_tag" "$archive" --clobber
-            gh release edit "$release_tag" --title "NUFE-Schedule"
+            gh release edit "$release_tag" --title "NUFE-Schedule" --notes-file docs/release-notes.md
           else
             gh release create "$release_tag" "$archive" \
               --target "$GITHUB_SHA" \
               --title "NUFE-Schedule" \
-              --notes "固定安装包：main 分支更新并通过测试后覆盖此附件。不使用递增版本号。"
+              --notes-file docs/release-notes.md
           fi

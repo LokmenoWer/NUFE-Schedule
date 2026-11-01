@@ -7,11 +7,11 @@
 - GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `NUFE-Schedule.zip`，不需要创建新版本号或新 Release。
 - 可运行 `bash scripts/package.sh` 生成 `dist/NUFE-Schedule.zip`。
 
-## 兼容与发布
+## 发布机制与兼容性
 
-正式固定下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。GitHub Release 必须关联 Tag，因此只在首次发布时创建一次内部固定标签 `stable`，页面标题始终是 `NUFE-Schedule`；以后覆盖同一个 ZIP 附件。旧 Raw 地址 `https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip` 暂时保留，以免已有导入失效，但它可能不再跟随未来提交更新。首次发布与后续覆盖都必须先通过完整测试；测试失败则不替换现有 Release 资产。
+正式固定下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。GitHub Release 必须关联 Tag，因此只在首次发布时创建一次内部固定标签 `stable`，页面标题始终是 `NUFE-Schedule`；以后覆盖同一个 ZIP 附件。旧 Raw 地址 `https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip` 暂时保留，以免已有导入失效，但它可能不再跟随未来提交更新。首次发布与后续覆盖都必须先通过完整测试；测试失败则不替换现有 Release 资产。 发行页面的项目说明统一维护在 `docs/release-notes.md`，自动发布过程会同步更新该说明，以保证公开内容与项目功能保持一致。
 
-## Gemini 建议的技术取舍
+## 技术评估与后续改进方向
 
 1. 模块化：当前 2300 多行包含分发许可证；后续将无宿主依赖的纯函数逐步抽离，再打包为原 Scripting 单文件，不一次性重写 CAS 与日历事务。
 2. TypeScript：`@ts-nocheck` 仍保留；后续应先逐步定义课程、学期、事务及宿主 API 类型，再在模块层逐步开启严格检查。
