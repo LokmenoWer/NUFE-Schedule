@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: official semester-start alignment and guarded foreground recovery of stale sync locks.
+// Modified 2026-11-02: iCloud-synchronized credentials with verified migration; device-only Cookie, identity and fingerprint keys.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -49,6 +49,24 @@ const Keychain={
  contains:key=>HostKeys.contains(key,{synchronizable:false}),get:key=>HostKeys.get(key,{synchronizable:false}),
  set:(key,value)=>{if(HostKeys.set(key,value,__keyOptions)!==true||HostKeys.get(key,{synchronizable:false})!==value){const e=new Error('CREDENTIALS_UNAVAILABLE');e.code='CREDENTIALS_UNAVAILABLE';throw e;}},
  remove:key=>{if(HostKeys.remove(key,{synchronizable:false})!==true){const e=new Error('CREDENTIALS_UNAVAILABLE');e.code='CREDENTIALS_UNAVAILABLE';throw e;}}
+};
+// Only account/password credentials use iCloud Keychain. Session cookies,
+// person IDs, fingerprints and the original local keys remain device-only.
+const __cloudOptions={synchronizable:true,accessibility:'first_unlock'};
+const CloudKeychain={
+  contains:key=>HostKeys.contains(key,{synchronizable:true}),
+  get:key=>HostKeys.get(key,{synchronizable:true}),
+  set:(key,value)=>{
+    if(HostKeys.set(key,value,__cloudOptions)!==true||
+       HostKeys.get(key,{synchronizable:true})!==value){
+      const e=new Error('CREDENTIALS_UNAVAILABLE');e.code='CREDENTIALS_UNAVAILABLE';throw e;
+    }
+  },
+  remove:key=>{
+    if(HostKeys.remove(key,{synchronizable:true})!==true){
+      const e=new Error('CREDENTIALS_UNAVAILABLE');e.code='CREDENTIALS_UNAVAILABLE';throw e;
+    }
+  }
 };
 const UUID=hostAPI('UUID');
 const Timer={schedule:(ms,repeats,callback)=>{const id=repeats?setInterval(callback,ms):setTimeout(callback,ms);return {invalidate:()=>repeats?clearInterval(id):clearTimeout(id)};}};
@@ -131,23 +149,64 @@ const TABLE = JW + '/student/for-std/course-table';
 const SSO = JW + '/student/sso/login';
 const KEY = 'NUFE.Local.v1.cookies';
 // Scripting Keychain is device/app-level credential storage; never store this key in JSON state.
-const CRED_KEY = 'NUFE.Local.v1.saved-login';
-function hasSavedCredentials(){try{return Keychain.contains(CRED_KEY);}catch(_){fail('CREDENTIALS_UNAVAILABLE');}}
-function readSavedCredentials(){
-  if(!hasSavedCredentials())return null;
-  let saved;
-  try{saved=JSON.parse(Keychain.get(CRED_KEY));}catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+const CRED_KEY = 'NUFE.Local.v1.saved-login'; // Legacy device-only credential key.
+const CLOUD_CRED_KEY = 'NUFE.Schedule.v1.icloud-credentials';
+function credentialRecord(raw){
+  let saved;try{saved=JSON.parse(raw);}catch(_){fail('CREDENTIALS_INVALID');}
   if(!saved||saved.version!==1||typeof saved.username!=='string'||typeof saved.password!=='string'||
      !/^.{1,100}$/.test(saved.username)||!saved.password||saved.password.length>512)fail('CREDENTIALS_INVALID');
   return saved;
 }
+function localCredentialRaw(){return Keychain.contains(CRED_KEY)?Keychain.get(CRED_KEY):null;}
+function cloudCredentialRaw(){return CloudKeychain.contains(CLOUD_CRED_KEY)?CloudKeychain.get(CLOUD_CRED_KEY):null;}
+function hasSavedCredentials(){
+  try{
+    if(Keychain.contains(CRED_KEY))return true; // Retain login during migration/offline sync.
+    return CloudKeychain.contains(CLOUD_CRED_KEY);
+  }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+}
+function readSavedCredentials(){
+  // A pre-migration device keeps using its own account if a different Apple ID
+  // credential appears in iCloud. Never silently switch an existing account.
+  let raw;
+  try{raw=localCredentialRaw()||cloudCredentialRaw();}catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+  return raw===null?null:credentialRecord(raw);
+}
+function migrateSavedCredentials(){
+  // Safe lazy migration: never remove the old local value before a verified
+  // synchronized read-back. A mismatch with an existing cloud account is
+  // reported rather than overwritten by an automatic background run.
+  const local=localCredentialRaw();
+  if(!local)return 'cloud-or-empty';
+  credentialRecord(local);
+  let remote=cloudCredentialRaw();
+  if(remote&&remote!==local)return 'conflict';
+  if(!remote){CloudKeychain.set(CLOUD_CRED_KEY,local);remote=cloudCredentialRaw();}
+  if(remote!==local)fail('CREDENTIALS_UNAVAILABLE');
+  Keychain.remove(CRED_KEY);
+  return 'migrated';
+}
 function saveCredentials(username,password){
   username=String(username||'').trim();
   if(!username||username.length>100||typeof password!=='string'||!password||password.length>512)fail('CREDENTIALS_INVALID');
-  try{Keychain.set(CRED_KEY,JSON.stringify({version:1,username,password}));}
-  catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+  const value=JSON.stringify({version:1,username,password});
+  // Store ONLY the selected credentials in iCloud, never the session cookies.
+  try{
+    CloudKeychain.set(CLOUD_CRED_KEY,value);
+    if(Keychain.contains(CRED_KEY)){
+      // Avoid a stale local value shadowing the newly saved cloud password.
+      Keychain.set(CRED_KEY,value);
+      Keychain.remove(CRED_KEY);
+    }
+  }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
 }
-function removeSavedCredentials(){try{if(Keychain.contains(CRED_KEY))Keychain.remove(CRED_KEY);}catch(_){fail('CREDENTIALS_UNAVAILABLE');}}
+function removeSavedCredentials(){
+  try{
+    // Deleting a synchronized item also deletes the other devices' copies.
+    if(CloudKeychain.contains(CLOUD_CRED_KEY))CloudKeychain.remove(CLOUD_CRED_KEY);
+    if(Keychain.contains(CRED_KEY))Keychain.remove(CRED_KEY);
+  }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+}
 function maskedAccount(username){const s=String(username||'');if(s.length<5)return '已设置（隐藏）';return s.slice(0,2)+'***'+s.slice(-2);}
 
 const DAY = 86400000;
@@ -1348,27 +1407,30 @@ async function widget(store) {
 async function manageSavedCredentials(state,store){
   let current=null,damaged=false;try{current=readSavedCredentials();}catch(e){if(['CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(e.code)){damaged=true;}else throw e;}
   const present=hasSavedCredentials();
-  const menu=new Alert();menu.title='本机自动登录凭据';
-  menu.message=damaged?'检测到已保存凭据，但格式异常或暂不可读取。你可以删除并重新保存。':
-    current?'已保存账号 '+maskedAccount(current.username)+'（密码不显示）。仅当学校 Cookie 失效时使用。':
-    '尚未保存账号密码。保存后，定时同步可以在 Cookie 失效时尝试一次重新登录。';
+  const menu=new Alert();menu.title='iCloud 自动登录凭据';
+  menu.message=damaged?'保存的登录凭据格式异常或暂不可读取，请检查后重新保存。':
+    current?'已保存账号 '+maskedAccount(current.username)+'（密码不显示）。'+
+      (state.credentialCloudStatus==='conflict'?'本机与 iCloud 凭据不一致；当前优先使用本机账号，请手动更换或确认。':
+       state.credentialCloudStatus==='unavailable'?'iCloud 迁移尚未完成，暂时保留本机凭据。':'Cookie 失效时可自动重新登录。'):
+    '尚未保存账号密码。保存到 iCloud 钥匙串后，可在其他已同步设备上使用。';
   menu.addAction(present?'更换账号或密码':'保存账号与密码');
   if(present)menu.addDestructiveAction('删除保存的账号与密码');
   menu.addCancelAction('关闭');
   const choice=await menu.presentSheet();if(choice<0)return;
   if(choice===0){
-    const user=(await input('保存到本机 Keychain','NUFE 学号')).trim();
-    const pass=await input('保存到本机 Keychain','NUFE 密码（安全输入）',true);
+    const user=(await input('保存到 iCloud 钥匙串','NUFE 学号')).trim();
+    const pass=await input('保存到 iCloud 钥匙串','NUFE 密码（安全输入）',true);
     if(!await confirm('确认启用自动登录',
-      '学号和密码将保存在 Scripting 的 iOS Keychain 中，不写入脚本、日历、日志或普通文件。仅通过 HTTPS 向NUFE官方认证域名提交。\n\n注意：Scripting 按脚本隔离 Keychain，凭据不启用 iCloud 同步；若学校要求验证码或二次认证，仍须手动完成。\n\n确定保存？'))return;
+      '学号和密码将保存于可同步的 iCloud 钥匙串，以供同一 Apple 账户的设备使用；课程 Cookie 与设备指纹仍只保存在本机。\n\nScripting 按脚本隔离 Keychain；其他设备需安装对应项目并开启 iCloud 钥匙串。登录过程仅通过 HTTPS 访问 NUFE 官方认证域名。学校要求验证码或二次认证时仍需人工处理。\n\n确定保存？'))return;
     saveCredentials(user,pass);
+    state.credentialCloudStatus='synced';
     // After user explicitly updates credentials, allow the next timed check.
     state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
-    await notice('已启用自动重新登录','已保存到本机 Keychain。下一次同步会先使用 Cookie；失效时才尝试一次学号密码登录。未验证当前保存的密码是否正确。');
+    await notice('已启用自动重新登录','登录凭据已保存到 iCloud 钥匙串（同步到其他设备可能需要时间）。Cookie 仍在本机，失效时会尝试用账号密码重新登录；尚未验证学校是否接受当前凭据。');
   }else if(present&&choice===1){
-    if(!await confirm('确认删除本机凭据','将删除保存的学号和密码；现有课表与 Cookie 不受影响。'))return;
-    removeSavedCredentials();
-    await notice('已关闭自动登录','保存的学号和密码已从 Scripting Keychain 删除。');
+    if(!await confirm('确认删除同步凭据','将从 iCloud 钥匙串删除登录凭据，其他已同步设备也会失去该副本。现有课表与各设备本机 Cookie 不受影响。'))return;
+    removeSavedCredentials();state.credentialCloudStatus=null;store.write(state);
+    await notice('已关闭自动登录','登录凭据已从 iCloud 钥匙串及本机旧存储中删除。');
   }
 }
 async function refreshResult(ok,code=null){
@@ -1411,6 +1473,15 @@ async function run() {
     }
     store.acquire();locked=true;state=store.read();
     if(!state.owner){state.owner=uuid();store.write(state);}
+    // Attempt one safe password migration per invocation. Failures never block
+    // existing local credentials or trigger repeated school login attempts.
+    if(Keychain.contains(CRED_KEY)){
+      try{
+        const migrated=migrateSavedCredentials();
+        state.credentialCloudStatus=migrated==='conflict'?'conflict':'synced';
+      }catch(_){state.credentialCloudStatus='unavailable';}
+      store.write(state);
+    }
     // This deployment requests final refresh results only. Remove legacy class alerts.
     if(state.notificationMode!=='result-only-v1.9'){
       state.notificationMode='result-only-v1.9';state.minutes=0;store.write(state);
@@ -1456,7 +1527,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
