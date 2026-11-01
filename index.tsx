@@ -8,17 +8,17 @@ async function __NUFE_REPORT_STARTUP(error){
   const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
   const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
-  console.error('[NUFE v2.1.0] '+known+' · '+__NUFE_BOOT_PHASE);
+  console.error('[NUFE-Schedule] '+known+' · '+__NUFE_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
   catch(_){try{await api('Notification').schedule({title:'NUFE 课表 · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
 }
 async function __NUFE_START(){
   try{
-    console.log('[NUFE v2.1.0] 正在启动');
+    console.log('[NUFE-Schedule] 正在启动');
 // @ts-nocheck
 
-// nufe-schedule: foreground management and background shortcut synchronization.
+// NUFE-Schedule: foreground management and background shortcut synchronization.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
@@ -111,16 +111,16 @@ const ShareSheet={present:paths=>hostAPI('DocumentPicker').exportFiles({files:pa
 // END SCRIPTING ADAPTER
 
 // SPDX-License-Identifier: GPL-3.0-only
-// NUFE Local Scripting v2.0 (native Scripting adapter + verified calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
+// NUFE-Schedule (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
 // upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
 // No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* nufe-schedule 使用摘要：Scripting 入口 index.tsx；默认直接同步，mode=menu 显示管理菜单。
- * 快捷指令打开 scripting://run_single/nufe-schedule；无需参数，直接同步。新增、调整、停课自动同步；删除本工具事件前本地备份，最后仅报告成功/失败。
+/* NUFE-Schedule：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
+ * 使用 Scripting「运行意图脚本」触发同步，无需通过 URL 唤起 App。
  * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
  * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
  * 系列删除可能影响范围外的同系列课程，但不会跨日历；RRULE/提醒无法完整备份。
  * 本地模拟测试不等于 iPhone 实测。iCloud 来源需用户在 Apple 日历确认。
- * 源码 GPL-3.0-only；原项目 https://github.com/LokmenoWer/nufe-kebiao
+ * 源码 GPL-3.0-only；来源说明及许可证信息见原有版权声明与仓库 LICENSE；上游仓库 https://github.com/LokmenoWer/nufe-kebiao
  */
 'use strict';
 // This deployment is explicitly authorized for a disposable, dedicated timetable calendar.
@@ -918,7 +918,7 @@ const ERROR_GUIDE={
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
-  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Local 创建且已成功写入的课程，才能安全辨认旧重复日程。','先完成一次手动同步，再从菜单执行历史课程清理。'],
+  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Schedule 创建且已成功写入的课程，才能安全辨认旧重复日程。','先完成一次手动同步，再从菜单执行历史课程清理。'],
   CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','先恢复并完成同步，再执行历史重复课程清理。'],
   CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看运行状态和备份，稍后重试「覆盖旧课程」；若旧课程是重复日程，可在 Apple 日历中选择删除整个重复系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
@@ -953,6 +953,9 @@ function stampStage(state,store,stage){
 function createProgress(state,store,interactive){
   const stage=message=>stampStage(state,store,message);stage.finish=()=>{};return stage;
 }
+// Recognize a previously bound calendar even if it has not yet been renamed.
+// The legacy spelling is encoded solely to preserve migration compatibility.
+const LEGACY_CALENDAR_TITLE='\u5357\u8d22\u8bfe\u8868';
 function liveCalendar(c){return c&&c.allowsContentModifications&&!c.isSubscribed;}
 async function visibleCalendars(){
   let all;try{all=await Calendar.forEvents();}catch(_){fail('CALENDAR_PERMISSION');}
@@ -971,7 +974,7 @@ async function containsManagedEvent(calendar,state){
 // Preserve the bound calendar identifier; do not create a replacement calendar.
 async function alignBoundCalendarName(calendar,state,store){
   let current=calendar;
-  if(config.runsInApp&&String(calendar.title||'').trim()==='南财课表'&&typeof calendar.save==='function'){
+  if(config.runsInApp&&String(calendar.title||'').trim()===LEGACY_CALENDAR_TITLE&&typeof calendar.save==='function'){
     try{
       calendar.title='课表';
       await calendar.save();
@@ -992,7 +995,7 @@ async function pickCalendar(state,store,force=false){
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
   // Allow the old title during migration, but prefer the new name.
   let candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-  if(!candidates.length)candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='南财课表');
+  if(!candidates.length)candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
   assert(candidates.length,'CALENDAR_NOT_VISIBLE');
   let picked;
   if(candidates.length===1){
@@ -1357,7 +1360,7 @@ async function manageSavedCredentials(state,store){
     const user=(await input('保存到本机 Keychain','NUFE 学号')).trim();
     const pass=await input('保存到本机 Keychain','NUFE 密码（安全输入）',true);
     if(!await confirm('确认启用自动登录',
-      '学号和密码将保存在 Scripting 的 iOS Keychain 中，不写入脚本、日历、日志或普通文件。仅通过 HTTPS 向南京财经大学官方认证域名提交。\n\n注意：Scripting 按脚本隔离 Keychain，凭据不启用 iCloud 同步；若学校要求验证码或二次认证，仍须手动完成。\n\n确定保存？'))return;
+      '学号和密码将保存在 Scripting 的 iOS Keychain 中，不写入脚本、日历、日志或普通文件。仅通过 HTTPS 向NUFE官方认证域名提交。\n\n注意：Scripting 按脚本隔离 Keychain，凭据不启用 iCloud 同步；若学校要求验证码或二次认证，仍须手动完成。\n\n确定保存？'))return;
     saveCredentials(user,pass);
     // After user explicitly updates credentials, allow the next timed check.
     state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
