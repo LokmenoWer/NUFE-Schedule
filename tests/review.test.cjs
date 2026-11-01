@@ -245,12 +245,13 @@ test('foreground management exposes locked-state recovery without waiting for ac
   constructor(){this.actions=[];}
   addAction(label){this.actions.push(label);}
   addCancelAction(){}
-  async presentSheet(){actions.push(this.actions.slice());return presented++===0?1:4;}
+  async presentSheet(){actions.push(this.actions.slice());return [1,2,2][presented++]??-1;}
   async presentAlert(){return 0;}
  };
  e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;return false;};
  await e.m.run();
- a.ok(actions[1].includes('检查同步锁'));
+ a.ok(actions[1].includes('更多操作'));
+ a.ok(actions[2].includes('检查同步锁'));
  a.equal(confirmations,1);
  a.equal(e.files.get(lockPath),lockBefore);
  a.equal(e.requests.length,0);
@@ -321,4 +322,44 @@ test('a different iCloud account is not silently overwritten on migration',async
  a.equal(e.m.migrateSavedCredentials(),'conflict');
  a.equal(e.m.readSavedCredentials().username,'local-user');
  a.equal(e.keys.get('NUFE.Schedule.v1.icloud-credentials'),cloud);
+});
+
+test('password login contains no QR entry points',()=>{
+ a.equal(source.includes('qrLogin('),false);
+ a.equal(source.includes('qrCode/getToken'),false);
+ a.equal(source.includes('QR_EXPIRED'),false);
+ a.equal(source.includes('选择学校登录方式'),false);
+});
+test('local form displays account and masked password together',async()=>{
+ const e=await env();
+ let html='',presented=false,disposed=false,requestGuard=null;
+ e.sandbox.__sdk.WebViewController=class {
+  constructor(){this.shouldAllowRequest=null;}
+  async loadHTML(page){html=page;requestGuard=this.shouldAllowRequest;return true;}
+  async present(){presented=true;}
+  async evaluateJavaScript(){return {username:'  test-student  ',password:'test-password',remember:true};}
+  dispose(){disposed=true;}
+ };
+ const result=await e.m.credentialForm({title:'NUFE 登录',showRemember:true});
+ a.equal(result.username,'test-student');
+ a.equal(result.password,'test-password');
+ a.equal(result.remember,true);
+ a.equal(presented,true);a.equal(disposed,true);
+ a.ok(html.includes('type="password"'));
+ a.ok(html.includes('id="account"'));
+ a.ok(html.includes('id="remember"'));
+ a.equal(await requestGuard({url:'https://example.org'}),false);
+ a.equal(await requestGuard({url:'about:blank'}),true);
+});
+test('local credential form does not opt-in to iCloud automatically',async()=>{
+ const e=await env();
+ e.sandbox.__sdk.WebViewController=class {
+  async loadHTML(){return true;}
+  async present(){}
+  async evaluateJavaScript(){return {username:'student',password:'pass',remember:false};}
+  dispose(){}
+ };
+ const result=await e.m.credentialForm({showRemember:true});
+ a.equal(result.remember,false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });

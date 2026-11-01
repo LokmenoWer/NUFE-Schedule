@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: iCloud-synchronized credentials with verified migration; device-only Cookie, identity and fingerprint keys.
+// Modified 2026-11-02: compact two-field login, password-only flow; iCloud credentials and device-only cookies.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -104,7 +104,7 @@ class WebView{
  set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
  async loadHTML(html){if(!await this.inner.loadHTML(html))throw Error('WebView load failed');}
  async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
- async present(){await this.inner.present({navigationTitle:'NUFE 官方验证'});}
+ async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
  constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;this.triggerDate=null;}
@@ -489,6 +489,42 @@ async function fieldsFrom(html,id) {
   for(const name of ['execution','lt'])if(!out[name]){const x=lookup('name',name);if(x)out[name]=x.value||'';}
   return out;
 }
+// Compact, local-only credential entry. No school webpage or third-party URL
+// is loaded. Password stays hidden and the ephemeral view is disposed promptly.
+async function credentialForm({title='NUFE 登录',showRemember=false}={}){
+  const w=new WebView();
+  w.shouldAllowRequest=req=>String(req.url||'')==='about:blank';
+  const html=[
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; form-action \'none\'; base-uri \'none\'">',
+    '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
+    'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
+    'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
+    '.choice{display:flex;align-items:center;gap:10px;margin-top:20px;font-size:14px;line-height:1.4}.choice input{width:20px;height:20px;flex:none}',
+    '.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:18px}</style></head><body>',
+    '<h2>NUFE 统一身份认证</h2>',
+    '<label class="label" for="account">学号</label><input id="account" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
+    '<label class="label" for="secret">密码</label><input id="secret" type="password" maxlength="512" autocomplete="off">',
+    showRemember?'<label class="choice"><input id="remember" type="checkbox">保存到 iCloud 钥匙串（自动登录）</label>':'',
+    '<p class="hint">填写后点击右上角「完成」。</p></body></html>'
+  ].join('');
+  try{
+    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
+    await w.present(title);
+    const result=await bounded(w.evaluateJavaScript(
+      '({username:document.getElementById("account").value,password:document.getElementById("secret").value,remember:!!document.getElementById("remember")?.checked})'
+    ),12000,'WEBVIEW_TIMEOUT');
+    if(!result||typeof result.username!=='string'||typeof result.password!=='string')fail('CANCELLED');
+    const username=result.username.trim(),password=result.password;
+    if(!username&&!password)fail('CANCELLED');
+    if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
+    return {username,password,remember:showRemember&&result.remember===true};
+  }finally{
+    try{w.inner.dispose();}catch(_){}
+    __webviews.delete(w.inner);
+  }
+}
 async function humanSlider(http) {
   await http.get(AUTH+'/common/toSliderCaptcha.htl',{ajax:true});
   const j=await http.authJSON(AUTH+'/common/openSliderCaptcha.htl?_='+Date.now());
@@ -522,27 +558,8 @@ async function mfa(http,r) {
   const j=await http.authJSON(endpoint('reAuthSubmit.do',AUTH+'/reAuthCheck/reAuthSubmit.do'),{body:form(data)});assert(!['reAuth_failed','reAuth_unauthorized'].includes(j.code),'MFA_FAILED');
   await http.get(AUTH+'/login?'+form({service}));
 }
-async function qrLogin(http,r) {
-  const f=await fieldsFrom(r.text,'qrLoginForm');assert(f&&f.execution,'LOGIN_SCHEMA');
-  const token=(await http.get(AUTH+'/qrCode/getToken?'+form({ts:Date.now(),uuid:''}),{ajax:true})).text.trim();
-  assert(token&&token.length<=128&&!token.includes('<'),'CAPTCHA');
-  const image=await http.get(AUTH+'/qrCode/getCode?'+form({uuid:token}),{binary:true});
-  assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');
-  await notice('学校扫码登录','下一页显示学校二维码。请用学校支持的 App 扫码（通常需要另一屏幕展示），确认后关闭预览并继续。本流程不保存密码。');
-  await QuickLook.present(Image.fromData(image.text));
-  const started=Date.now();let confirmed=false;
-  for(let i=0;i<10&&Date.now()-started<5*60000;i++) {
-    if(!await confirm('扫码确认','已在学校 App 中确认登录？点击确认检查状态。'))fail('CANCELLED');
-    const code=(await http.get(AUTH+'/qrCode/getStatus.htl?'+form({ts:Date.now(),uuid:token}),{ajax:true})).text.trim();
-    if(code==='1'){confirmed=true;break;}if(code==='3')fail('QR_EXPIRED');
-    await notice('尚未确认',code==='2'?'已扫描，请在学校 App 确认。':'等待扫描。');
-  }
-  assert(confirmed,'QR_EXPIRED');
-  const result=await http.get(AUTH+'/login?'+form({display:'qrLogin',service:SSO}),{body:form({lt:f.lt||'',uuid:token,cllt:'qrLogin',dllt:f.dllt||'generalLogin',execution:f.execution,_eventId:'submit',rmShown:f.rmShown||'1'})});
-  if(/reAuthSubmit|isMultifactor=true/.test(result.text+' '+result.url))await mfa(http,result);
-}
 // Password authentication is shared by manual login and the ONE automatic retry.
-// No captcha, OTP, QR, slider, or MFA attempt is automated when backgrounded.
+// Captcha, slider, OTP and MFA remain interactive-only.
 async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}) {
   try {
     onStage('解析学校登录表单');
@@ -588,15 +605,14 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(!interactive){
     const saved=readSavedCredentials();
     if(!saved)fail('AUTH_REQUIRED');
-    onStage('Cookie 已失效，尝试一次本机 Keychain 自动登录');
+    onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
-  const method=new Alert();method.title='选择学校登录方式';method.addAction('学号密码');method.addAction('学校扫码');method.addCancelAction('取消');const choice=await method.presentSheet();if(choice<0)fail('CANCELLED');if(choice===1){await qrLogin(http,r);const page=await http.get(TABLE);pageInfo(page.text);return page.text;}
   onStage('等待输入学校登录信息');
-  const username=(await input('NUFE 统一身份认证','学号（只发送给学校）')).trim();
-  const password=await input('NUFE 统一身份认证','密码（仅本次使用；不会自动保存）',true);
-  const page=await passwordLogin(http,r,username,password,true,onStage);
-  if(!hasSavedCredentials()&&await confirm('在本机保存自动登录凭据？','可选：将学号和密码保存在本脚本的设备本地 Keychain，Cookie 失效时自动重登。不启用 iCloud 同步，不写入普通文件；取消不保存。'))saveCredentials(username,password);
+  const account=await credentialForm({title:'NUFE 登录',showRemember:true});
+  const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
+  // Save only after school confirms authentication succeeded.
+  if(account.remember)saveCredentials(account.username,account.password);
   return page;
 }
 // Immutable generation files: a new file is written and read back before old versions
@@ -919,7 +935,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',QR_EXPIRED:'二维码已过期或未确认，请重新运行。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求的二次认证不是短信或动态口令，本版不能转发；请改用扫码登录，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -946,9 +962,9 @@ const ERROR_GUIDE={
   LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','运行「登录页面自检（无需密码）」并检查是否进入学校官方登录页。'],
   LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','运行「登录页面自检（无需密码）」；若持续发生，需要适配学校页面。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
-  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','从「账号与日历设置」选择「自动登录凭据」保存到本机 Keychain，或手动登录。'],
+  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','从「账号与日历设置」选择「自动登录凭据」保存到 iCloud 钥匙串，或手动登录。'],
   AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
-  AUTO_LOGIN_REJECTED:['已尝试使用本机 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再在「账号与日历设置 → 自动登录凭据」中更新密码；不要频繁尝试。'],
+  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再在「账号与日历设置 → 自动登录凭据」中更新密码；不要频繁尝试。'],
   CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','从「账号与日历设置 → 自动登录凭据」删除并重新保存凭据。'],
   CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台运行；检查保存的自动登录凭据。'],
   WEBVIEW_TIMEOUT:['Scripting 的本机 WebView 在限定时间内没有响应；这是本地组件等待超时，不能认定账号密码有误。','完全退出 Scripting 后重试；如反复出现，请保留阶段日志。'],
@@ -1402,7 +1418,7 @@ async function widget(store) {
   if(!small){w.addSpacer();const success=Object.values(state.semesters).map(s=>s.lastSuccess).filter(Boolean).sort()[0];w.addText(state.tx?'同步待恢复':!success||now-Date.parse(success)>2*DAY?'课表可能过期，点按刷新':'仅本地缓存').font=Font.systemFont(10);}
   w.url=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});w.refreshAfterDate=new Date(now+30*60000);Script.setWidget(w);
 }
-// Opt-in only. Scripting Keychain is scoped to this script and configured device-only;
+// Credentials are opt-in and iCloud-synchronizable; cookies and device IDs stay device-only.
 // install only trusted scripts, and do not export keys/values to diagnostics.
 async function manageSavedCredentials(state,store){
   let current=null,damaged=false;try{current=readSavedCredentials();}catch(e){if(['CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(e.code)){damaged=true;}else throw e;}
@@ -1418,11 +1434,8 @@ async function manageSavedCredentials(state,store){
   menu.addCancelAction('关闭');
   const choice=await menu.presentSheet();if(choice<0)return;
   if(choice===0){
-    const user=(await input('保存到 iCloud 钥匙串','NUFE 学号')).trim();
-    const pass=await input('保存到 iCloud 钥匙串','NUFE 密码（安全输入）',true);
-    if(!await confirm('确认启用自动登录',
-      '学号和密码将保存于可同步的 iCloud 钥匙串，以供同一 Apple 账户的设备使用；课程 Cookie 与设备指纹仍只保存在本机。\n\nScripting 按脚本隔离 Keychain；其他设备需安装对应项目并开启 iCloud 钥匙串。登录过程仅通过 HTTPS 访问 NUFE 官方认证域名。学校要求验证码或二次认证时仍需人工处理。\n\n确定保存？'))return;
-    saveCredentials(user,pass);
+    const account=await credentialForm({title:'保存登录凭据'});
+    saveCredentials(account.username,account.password);
     state.credentialCloudStatus='synced';
     // After user explicitly updates credentials, allow the next timed check.
     state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
@@ -1457,8 +1470,15 @@ async function run() {
       if(selected===2){await notice('运行状态',statusText(state));return;}
       if(selected===1){
         const settings=new Alert();settings.title='账号与日历设置';
-        ['自动登录凭据','重新绑定课表日历','清除学校会话','导出最近备份','检查同步锁'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
-        const choice=await settings.presentSheet();if(choice<0)return;action=[13,7,5,16,17][choice];
+        ['自动登录凭据','课表日历','更多操作'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
+        const choice=await settings.presentSheet();if(choice<0)return;
+        if(choice===2){
+          const advanced=new Alert();advanced.title='更多操作';
+          ['清除学校会话','导出最近备份','检查同步锁'].forEach(x=>advanced.addAction(x));
+          advanced.addCancelAction('返回');
+          const selected=await advanced.presentSheet();if(selected<0)return;
+          action=[5,16,17][selected];
+        }else action=[13,7][choice];
         if(action===17){
           // Lock inspection must work without acquiring an already held lock.
           // Never clear it automatically: another scheduled run may be active.
@@ -1527,7 +1547,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
