@@ -1,12 +1,18 @@
-# NUFE-Local · Scripting v2.0
+# NUFE-Local · Scripting v2.0.1
 
 南京财经大学本地课表同步，适用于 iPhone 的 **Scripting App**。运行代码只有一个文件，无 npm、远程脚本或第三方服务器依赖。
 
-本项目基于 [LokmenoWer/nufe-kebiao](https://github.com/LokmenoWer/nufe-kebiao) 的 CAS/教务协议逻辑，遵循 GPL-3.0-only。原 v1.8 ZIP 已实际读取和审阅；v2.0 适配 Scripting 原生接口，不是把 Scriptable 文件改名。
+本项目基于 [LokmenoWer/nufe-kebiao](https://github.com/LokmenoWer/nufe-kebiao) 的 CAS/教务协议逻辑，遵循 GPL-3.0-only。原 v1.8 ZIP 已实际读取和审阅；v2.0.1 适配 Scripting 原生接口，不是把 Scriptable 文件改名。
+
+## v2.0.1 启动修复
+
+修复用户在 Scripting 3.2.1 上报告的 `SyntaxError: Unexpected identifier 'run'`：取消入口对顶层 await 的依赖，将初始化及同步放入显式异步函数启动。新增普通脚本直接解析、生产入口运行及启动异常弹窗测试。原先只在 async 包装中测试入口，未覆盖这一兼容问题。
+
+升级时在原项目中替换 `index.tsx` 和 `script.json`，保留原项目与本地凭据，不需要删除日历。控制台启动时会出现 `[NUFE v2.0.1] 正在启动`。本次测试未等同于手机真机验证；若仍失败，请提供新的错误代码，不要提供密码或 Cookie。
 
 ## 安装
 
-下载 [NUFE-Local-Scripting-v2.0.zip](NUFE-Local-Scripting-v2.0.zip)，ZIP 中只有 `index.tsx`（唯一运行代码）和 `script.json`（项目元数据）。在 Scripting 导入为 **NUFE-Local** 项目；如果当前版本没有 ZIP 导入入口，新建同名项目，将 `index.tsx` 全文替换为本仓库同名文件内容。
+下载 [NUFE-Local-Scripting-v2.0.1.zip](NUFE-Local-Scripting-v2.0.1.zip)，ZIP 中只有 `index.tsx`（唯一运行代码）和 `script.json`（项目元数据）。在 Scripting 导入为 **NUFE-Local** 项目；如果当前版本没有 ZIP 导入入口，新建同名项目，将 `index.tsx` 全文替换为本仓库同名文件内容。
 
 Scripting 官方主入口为 `index.tsx`。代码使用 JavaScript 语法，无 JSX 或外部源码模块；`NUFE-Local.js` 是同一份代码的 JS 扩展名副本，方便查看/复制，不能把它误装进 Scriptable。
 
@@ -57,7 +63,7 @@ Cookie 失效先尝试学校 SSO；仍失败时，若你自愿保存了凭据，
 
 自动保存同步前 JSON、旧内容清理前 ICS/JSON。在“账号与日历设置 → 导出最近备份”可保存到“文件”App。快照只覆盖扫描可见实例和部分循环元数据，**不完整保留 EXDATE、原始循环结束条件、所有提醒、邀请及 iCloud 元数据，不保证完整还原系列**。恢复快照会生成额外实例，正常刷新时不要重复导入 ICS。
 
-本地 **92 项 Scripting 接口模拟测试通过**，覆盖完整定时流程、默认打开即同步、首次配置不进菜单、三项主菜单、幂等性、中断重抓取、调课/停课/新增、两种系列删除行为、单个循环实例、其他日历保护、备份失败、写后核验、原生 Keychain 返回值、网络跳转、WebView 表达式和运行环境识别。
+本地 **95 项 Scripting 接口模拟测试通过**，覆盖完整定时流程、默认打开即同步、首次配置不进菜单、三项主菜单、幂等性、中断重抓取、调课/停课/新增、两种系列删除行为、单个循环实例、其他日历保护、备份失败、写后核验、原生 Keychain 返回值、网络跳转、WebView 表达式和运行环境识别。
 
 开发者可执行 `node --test tests/review.test.cjs`。所有测试使用模拟学校响应、内存日历和内存 Keychain，不访问学校账号或真实日历。
 

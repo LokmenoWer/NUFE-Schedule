@@ -1,6 +1,23 @@
 // @ts-nocheck
 import * as Scripting from "scripting";
-// NUFE-Local Scripting v2.0. Default index launch synchronizes; mode=menu opens management.
+// Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
+let __NUFE_BOOT_PHASE='初始化运行接口';
+async function __NUFE_REPORT_STARTUP(error){
+  const api=name=>Scripting[name]??globalThis[name];
+  const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
+    error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
+  const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
+  console.error('[NUFE v2.0.1] '+known+' · '+__NUFE_BOOT_PHASE);
+  try{await api('Dialog').alert({title:'课表启动失败',message});}
+  catch(_){try{await api('Notification').schedule({title:'南财课表 · 启动失败',body:message,silent:true});}catch(__){}}
+  try{api('Script').exit('刷新失败：'+known);}catch(_){}
+}
+async function __NUFE_START(){
+  try{
+    console.log('[NUFE v2.0.1] 正在启动');
+// @ts-nocheck
+
+// NUFE-Local Scripting v2.0.1. Default index launch synchronizes; mode=menu opens management.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script'),HostFiles=hostAPI('FileManager'),HostKeys=hostAPI('Keychain');
@@ -1188,6 +1205,7 @@ async function refreshResult(ok,code=null){
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 async function run() {
+  __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
   let firstSetup=false;
   if(__mode!=='menu'&&HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
@@ -1233,6 +1251,7 @@ async function run() {
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
+    __NUFE_BOOT_PHASE='同步运行';
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
     await synchronize(state,store,calendar,interactive,false,progress);
@@ -1942,3 +1961,9 @@ Public License instead of this License.  But first, please read
 
 
 */
+
+  }catch(error){await __NUFE_REPORT_STARTUP(error);}
+}
+// Calling an async function is supported by Scripting 3.2.1's normal script loader.
+// The Promise is exposed solely for local entry-point regression tests, never credentials.
+globalThis.__NUFE_LAUNCH__=__NUFE_START();
