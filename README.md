@@ -81,15 +81,19 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
 - 仅操作用户明确绑定的课表专用日历，不会主动清理其他日历。
 - 涉及重复课程和旧内容清理时，先写入并核验新课程，再尝试清理旧内容。日历备份无法保证完整恢复所有循环规则、提醒和邀请信息。
 
+## 自动测试与版本发布
+
+GitHub Actions 在 PR 与 main 分支自动测试；推送 `v*` 版本标签后，测试通过才会将 `NUFE-Schedule.zip` 上传 GitHub Releases。原有远程 ZIP 地址继续有效。具体见 [工程化说明](docs/engineering.md)。
+
 ## 测试
 
 仓库包含基于模拟学校响应、日历与凭据存储的自动化测试。安装 Node.js 后，可在仓库目录执行：
 
 ```bash
-node --test tests/review.test.cjs
+node --test tests/*.test.cjs
 ```
 
-测试结果不能代替真实学校账号、iPhone 锁屏场景及 iCloud 日历同步的实际验证。
+可执行 `bash scripts/package.sh` 生成 `dist/NUFE-Schedule.zip`。测试结果不能代替真实学校账号、iPhone 锁屏场景及 iCloud 日历同步的实际验证。
 
 ## 许可证
 

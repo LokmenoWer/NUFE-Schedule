@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: display locally checked Keychain storage state without claiming iCloud delivery.
+// Modified 2026-11-02: robust combined Set-Cookie parsing with independent pure-domain tests.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -358,9 +358,30 @@ async function encryptPassword(password,salt){
 function splitSetCookie(value) {
   if(Array.isArray(value))return value.flatMap(splitSetCookie);
   if(typeof value!=='string')return [];
-  return value.split(/\r?\n(?=\s*(?:set-cookie:\s*)?[^=;,\s]+=)/i)
-    .flatMap(line=>line.replace(/^\s*set-cookie:\s*/i,'').split(/,(?=\s*[^;,=\s]+=)/))
-    .map(s=>s.trim()).filter(Boolean);
+  // State-aware splitting: Expires dates and quoted cookie values may contain commas.
+  const result=[];let start=0,attributeStart=0,quoted=false,escaped=false;
+  const push=end=>{
+    const item=value.slice(start,end).replace(/^\s*(?:set-cookie:\s*)?/i,'').trim();
+    if(item)result.push(item);
+  };
+  for(let i=0;i<value.length;i++){
+    const c=value[i];
+    if(c==='"'&&!escaped){quoted=!quoted;continue;}
+    if(quoted){escaped=c==='\\'&&!escaped;continue;}
+    escaped=false;
+    if(c===';'){attributeStart=i+1;continue;}
+    if(c==='\n'&&/^\s*(?:set-cookie:\s*)?[^=;,\s]+=/i.test(value.slice(i+1))){
+      push(i);start=i+1;attributeStart=start;continue;
+    }
+    if(c!==','||!/^\s*[^=;,\s]+=/i.test(value.slice(i+1)))continue;
+    const attribute=value.slice(attributeStart,i).trim();
+    if(/^expires\s*=/i.test(attribute)){
+      const date=attribute.replace(/^expires\s*=\s*/i,'');
+      if(!Number.isFinite(Date.parse(date)))continue;
+    }
+    push(i);start=i+1;attributeStart=start;
+  }
+  push(value.length);return result;
 }
 function cookieDomain(raw) {
   if(typeof raw!=='string')return '';

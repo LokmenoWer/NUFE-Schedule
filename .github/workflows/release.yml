@@ -1,0 +1,27 @@
+name: Publish Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run all regressions
+        run: node --test tests/*.test.cjs
+      - name: Package stable-name Scripting ZIP
+        run: bash scripts/package.sh
+      - name: Upload ZIP to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/NUFE-Schedule.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/NUFE-Schedule.zip --title "NUFE-Schedule $GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi

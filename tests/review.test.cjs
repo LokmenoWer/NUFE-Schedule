@@ -123,11 +123,11 @@ test('automatic captcha requirement never encrypts or submits password',async()=
 test('cookie RFC default path also applies to directory endpoint itself',async()=>{const {m}=await env();const jar=new m.CookieJar();jar.ingest('https://jwxt.nufe.edu.cn/student/login',{'set-cookie':'x=v'});a.equal(jar.header('https://jwxt.nufe.edu.cn/student'),'x=v');a.equal(jar.header('https://jwxt.nufe.edu.cn/student/course'),'x=v');a.equal(jar.header('https://jwxt.nufe.edu.cn/students'),'');});
 test('an invitation anywhere stops dedicated deletion before first remove',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});const invitation=e.add(lesson(),{notes:'invitation'});invitation.attendees=[{name:'guest'}];await a.rejects(()=>e.m.replaceDedicatedLegacy(e.calendar,e.state,e.store),code('LEGACY_INVITATION'));a.equal(e.requests.filter(x=>x[0]==='remove').length,0);});
 
-test('owned series is replaced with a standalone new target after backup',async()=>{const e=await env();e.add(lesson(),{id:'owned-series'});e.add(lesson(),{id:'owned-series',offset:7*86400000});e.setSeries(true);e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,'owned-series');a.equal(e.m.eventRecord(e.db[0],e.state.owner).id,'lesson-1');});
+test('owned series is replaced with a standalone new target after backup',async()=>{const e=await env();e.add(lesson(),{id:'owned-series'});e.add(lesson(),{id:'owned-series',offset:7*86400000});e.setSeries(true);e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,'owned-series');a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,'lesson-1');});
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(menus[0],['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
+test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(menus[0],['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
@@ -239,6 +239,7 @@ test('missing official semester dates fails closed without importing or guessing
 test('foreground management exposes locked-state recovery without waiting for acquire',async()=>{
  const e=await env({hostEnv:'index'});
  e.store.write(e.state);
+ e.keys.set('NUFE.Local.v1.cookies','[]');
  const lockPath=e.store.path('run-lock.json');
  const lockBefore=e.files.get(lockPath);
  const actions=[];
@@ -269,6 +270,7 @@ test('explicit user approval removes only unchanged lock, never the timetable',a
  const e=await env();const path=e.store.path('run-lock.json');
  e.store.write(e.state);
  e.sandbox.__sdk.Dialog.confirm=async()=>true;
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
  await e.m.repairSyncLock(e.store);
  a.equal(e.files.has(path),false);
  a.ok([...e.files.keys()].some(x=>x.endsWith('.json')));
