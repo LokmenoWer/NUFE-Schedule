@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: calendar titles include teachers; notes show only local sync time (safe v3 migration).
+// Modified 2026-11-02: display locally checked Keychain storage state without claiming iCloud delivery.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -206,6 +206,21 @@ function removeSavedCredentials(){
     if(CloudKeychain.contains(CLOUD_CRED_KEY))CloudKeychain.remove(CLOUD_CRED_KEY);
     if(Keychain.contains(CRED_KEY))Keychain.remove(CRED_KEY);
   }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
+}
+// The following is only a local read-back check, not proof that iCloud has
+// already delivered this item to a second device. No secret values are logged.
+function credentialStorageStatus(){
+  let cloud=false,local=false;
+  try {
+    cloud=CloudKeychain.contains(CLOUD_CRED_KEY);
+    local=Keychain.contains(CRED_KEY);
+    if(cloud)credentialRecord(CloudKeychain.get(CLOUD_CRED_KEY));
+    if(local)credentialRecord(Keychain.get(CRED_KEY));
+  }catch(_){return '凭据不可读取或数据异常（未验证云同步）';}
+  if(cloud&&local)return '本机已读回 iCloud 可同步凭据，同时存在旧本机凭据（请核对迁移情况）';
+  if(cloud)return '本机已读回 iCloud 可同步凭据（其他设备尚未核验）';
+  if(local)return '仅检测到本机旧凭据，尚未迁移至 iCloud';
+  return '未保存账号密码';
 }
 function maskedAccount(username){const s=String(username||'');if(s.length<5)return '已设置（隐藏）';return s.slice(0,2)+'***'+s.slice(-2);}
 
@@ -1181,7 +1196,7 @@ function statusText(state){
     '\n最后进展：'+briefTime(state.lastStageAt)+
     '\n事务：'+(state.tx?'待恢复':'无')+'\n取消变动：自动同步（专用课表日历）'+
     '\n登录会话：'+(state.authPaused?'需要人工处理':'未检测到强制重新登录')+
-    '\n自动登录：'+(hasSavedCredentials()?'已启用（Keychain）':'未启用')+
+    '\n自动登录凭据：'+credentialStorageStatus()+
     '\n失效通知：'+(state.authExpiryNotifiedAt?'已提醒 '+briefTime(state.authExpiryNotifiedAt):(state.authNoticeError==='NOTIFICATION_FAILED'?'通知提交失败，请检查权限':'尚未触发'))+
     '\n上次专用日历清理：'+(state.lastLegacyCleanupAt?briefTime(state.lastLegacyCleanupAt)+'，删除 '+(state.lastLegacyCleanupCount||0)+' 次，核验剩余 '+(state.lastLegacyCleanupRemaining||0)+' 条':'尚未执行')+
     '\n课程提醒：'+(state.reminderError?'提交失败，请检查通知权限':'未检测到提交错误')+
@@ -1491,6 +1506,7 @@ async function manageSavedCredentials(state,store){
       (state.credentialCloudStatus==='conflict'?'本机与 iCloud 凭据不一致；当前优先使用本机账号，请手动更换或确认。':
        state.credentialCloudStatus==='unavailable'?'iCloud 迁移尚未完成，暂时保留本机凭据。':'Cookie 失效时可自动重新登录。'):
     '尚未保存账号密码。保存到 iCloud 钥匙串后，可在其他已同步设备上使用。';
+  menu.message+='\n\n存储状态：'+credentialStorageStatus();
   menu.addAction(present?'更换账号或密码':'保存账号与密码');
   if(present)menu.addDestructiveAction('删除保存的账号与密码');
   menu.addCancelAction('关闭');
@@ -1501,7 +1517,7 @@ async function manageSavedCredentials(state,store){
     state.credentialCloudStatus='synced';
     // After user explicitly updates credentials, allow the next timed check.
     state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
-    await notice('已启用自动重新登录','登录凭据已保存到 iCloud 钥匙串（同步到其他设备可能需要时间）。Cookie 仍在本机，失效时会尝试用账号密码重新登录；尚未验证学校是否接受当前凭据。');
+    await notice('已启用自动重新登录','本机已写入并读回 iCloud 可同步凭据。是否已同步到其他设备仍需核验。Cookie 保存在本机；学校账号密码尚未在此次保存操作中验证。');
   }else if(present&&choice===1){
     if(!await confirm('确认删除同步凭据','将从 iCloud 钥匙串删除登录凭据，其他已同步设备也会失去该副本。现有课表与各设备本机 Cookie 不受影响。'))return;
     removeSavedCredentials();state.credentialCloudStatus=null;store.write(state);
@@ -1609,7 +1625,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*

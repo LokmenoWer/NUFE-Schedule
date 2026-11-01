@@ -464,3 +464,27 @@ test('full teacher names from the school remain intact in calendar titles',async
  a.equal(rec.teachers[0],'高玉胭');
  a.equal(m.calendarTitle(rec),'中国税制（高玉胭）');
 });
+
+test('credential status identifies legacy-only and synchronized item read-back',async()=>{
+ const e=await env();
+ a.equal(e.m.credentialStorageStatus(),'未保存账号密码');
+ const legacy=JSON.stringify({version:1,username:'legacy',password:'placeholder'});
+ e.keys.set('NUFE.Local.v1.saved-login',legacy);
+ a.match(e.m.credentialStorageStatus(),/仅检测到本机旧凭据/);
+ e.m.saveCredentials('school-id','fake-password');
+ a.match(e.m.credentialStorageStatus(),/本机已读回 iCloud 可同步凭据/);
+ a.match(e.m.credentialStorageStatus(),/其他设备尚未核验/);
+ a.doesNotMatch(e.m.credentialStorageStatus(),/fake-password|school-id/);
+});
+test('credential status cannot claim success for invalid stored JSON',async()=>{
+ const e=await env();
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials','{broken');
+ a.match(e.m.credentialStorageStatus(),/数据异常/);
+ a.doesNotMatch(e.m.credentialStorageStatus(),/本机已读回 iCloud 可同步凭据/);
+});
+test('credential status surfaces dual-key migration instead of hiding it',async()=>{
+ const e=await env(),r=JSON.stringify({version:1,username:'test',password:'placeholder'});
+ e.keys.set('NUFE.Local.v1.saved-login',r);
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials',r);
+ a.match(e.m.credentialStorageStatus(),/同时存在旧本机凭据/);
+});

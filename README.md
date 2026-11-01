@@ -73,6 +73,7 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
 
 - 学校认证和课表请求仅访问 `authserver.nufe.edu.cn` 与 `jwxt.nufe.edu.cn`。
 - 账号密码存储于 iCloud 钥匙串（需要在设备上启用 iCloud 钥匙串），使用可同步的 `first_unlock` 访问权限；重启后首次解锁后，可供后台脚本读取。
+- Scripting 的脚本私有 Keychain 条目不会出现在「密码」App 的网站账号列表中。可进入「运行状态」或「账号与日历设置 → 自动登录凭据」核对本机是否能读回可同步条目；这并不代表已经验证其他设备的同步结果。
 - 会话 Cookie、设备指纹与账号身份校验标识继续保存在本机 Keychain，**不启用 iCloud 同步**。
 - 从旧版升级时，会在安全核验 iCloud 凭据写入成功后迁移旧账号密码；若云端不可用则保留旧本机凭据，避免中断原有自动登录。
 - iCloud 钥匙串同步受 Apple 账户、脚本隔离和系统同步时机影响。新设备需要安装对应 Scripting 项目并重新绑定本机课表日历；若学校要求验证码或二次认证仍须手动处理。
