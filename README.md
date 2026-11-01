@@ -1,0 +1,68 @@
+# NUFE-Local · Scripting v2.0
+
+南京财经大学本地课表同步，适用于 iPhone 的 **Scripting App**。运行代码只有一个文件，无 npm、远程脚本或第三方服务器依赖。
+
+本项目基于 [LokmenoWer/nufe-kebiao](https://github.com/LokmenoWer/nufe-kebiao) 的 CAS/教务协议逻辑，遵循 GPL-3.0-only。原 v1.8 ZIP 已实际读取和审阅；v2.0 适配 Scripting 原生接口，不是把 Scriptable 文件改名。
+
+## 安装
+
+下载 [NUFE-Local-Scripting-v2.0.zip](NUFE-Local-Scripting-v2.0.zip)，ZIP 中只有 `index.tsx`（唯一运行代码）和 `script.json`（项目元数据）。在 Scripting 导入为 **NUFE-Local** 项目；如果当前版本没有 ZIP 导入入口，新建同名项目，将 `index.tsx` 全文替换为本仓库同名文件内容。
+
+Scripting 官方主入口为 `index.tsx`。代码使用 JavaScript 语法，无 JSX 或外部源码模块；`NUFE-Local.js` 是同一份代码的 JS 扩展名副本，方便查看/复制，不能把它误装进 Scriptable。
+
+第一次运行直接进入必要配置和同步，不显示主菜单：授予日历完全访问和通知权限，绑定已有、可写的 **南财课表** 专用日历，在手机上完成学校登录。绑定时请核对日历账号来源，选择你的 iCloud 日历。
+
+登录成功后可以自愿保存学号密码到本脚本的设备本地 Keychain。不同 App 无法直接共享原 Scriptable 的 Cookie/Keychain；迁移到 Scripting 后首次需要重新登录。请不要把密码发给维护者。
+
+## 每日快捷指令：打开 App 就同步
+
+推荐使用两个动作，确保进入 Scripting 的主入口：
+
+1. **URL**：填写 `scripting://run_single/NUFE-Local`
+2. **打开 URL**：打开上一步 URL。
+
+为这条快捷指令设置每日个人自动化，并按当前 iOS 的选项设为立即运行。**不必传 sync，不弹主菜单。** 直接从 Scripting 运行项目也默认同步。URL 中项目名必须与实际名称一致；改名时需对应修改。
+
+本包只保留一个运行入口。不要改用要求 `intent.tsx` 的后台“运行脚本”动作；如需打开 App 执行，用上面的 URL 方式即可。`run_single` 用于减少重复启动，脚本另外保存同步锁。
+
+## 管理入口与精简菜单
+
+需管理账号时打开：`scripting://run_single/NUFE-Local?mode=menu`。也可点按刷新结果通知进入管理入口。
+
+主菜单只有三项：**立即刷新、账号与日历设置、运行状态**。设置页只保留自动登录凭据、重新绑定日历、清除学校会话、导出最近备份。去重、旧课清理、索引恢复、校历识别和备份自动执行，不另占主菜单。日常只报告一次刷新成功/失败，不发送进度、变更明细或上课提醒。
+
+## 专用日历自动覆盖
+
+用户明确授权“南财课表”是独立、内容可替换的课表日历。**其中的旧内容可以被清理，不要混放个人活动。** 只操作已绑定的日历 ID，不删除日历本身，不操作其他日历。
+
+1. 先从学校官方 HTTPS 域名获取并校验账号、课程、时间、周次与校历。意外变空或格式异常时保留旧课并报告失败。
+2. 保存事务和本地备份；新增课程创建单次事件，同一课程重复运行复用标记；调课更新，停课自动移除。
+3. 写后重新扫描核对。新课未确认写入时不清理旧导入内容，也不报告成功。
+4. 新课核验通过后，备份并自动清理扫描范围内的无本安装标记旧内容，包括早期 ICS、另一安装遗留课程和循环旧课。带本工具标记的旧系列先建单次新课，再移除旧系列。
+5. 清理后再次核验新版课表和剩余旧内容；失败会报告原因。部分写入已成功的事务不承诺回滚；下次先重新抓取最新教务数据，再恢复，避免直接重放过期取消计划。
+
+每个已导入学期扫描第一教学周周一前 30 天起的 500 天，并覆盖已知课程日期；合并重叠窗口、分段查询。无界历史内容不会全部遍历。一次只删除单个实例或一次删除整个系列都按实际重查结果处理，不按系列 ID 丢弃其余周次。
+
+Scripting 可读取循环规则、原始 occurrence 日期等信息。本版利用循环标志识别单个可见的循环实例，JSON 快照尽量保留可读取的循环字段。**公开 remove() 接口仍未提供单次/未来/整个系列的跨度参数；真实 iOS 行为待真机验证。** 删除可能影响该日历内扫描范围外的同系列课程，适用前提是整个绑定日历只放可替换的课表。带邀请的旧事件会停止清理，避免向他人发送取消通知。
+
+## 登录、错误和隐私
+
+Cookie 失效先尝试学校 SSO；仍失败时，若你自愿保存了凭据，则自动提交一次。验证码、滑块、短信、动态口令不会由后台绕过；无法自动完成时只报告刷新失败。点结果通知进入管理入口后，选择“立即刷新”，本人完成验证；成功后恢复自动刷新。网络或认证连续失败会退避，避免重复撞库式提交。
+
+账号密码、Cookie、账号一致性标识仅保存在 **Scripting Keychain**，显式 `synchronizable:false`、`first_unlock_this_device`。按当前官方文档，Keychain 按脚本隔离；请保留同一项目升级，不要删除项目后指望凭据继续存在。凭据不写入源码、普通状态、日历备注、阶段日志或本仓库，只发往 `authserver.nufe.edu.cn` 与 `jwxt.nufe.edu.cn`。
+
+课表、教师、教室、同步标记和阶段日志保存在本机 App Group 目录 `NUFE-Local-Scripting/NUFE-Local-Scripting-v2`，不放 iCloud 文档目录。学校请求有网络和跳转链超时，日历读取、WebView 验证有超时保护。密码加密使用设备原生安全随机数，不依赖后台 WebView 生成随机数。
+
+## 备份与真实设备限制
+
+自动保存同步前 JSON、旧内容清理前 ICS/JSON。在“账号与日历设置 → 导出最近备份”可保存到“文件”App。快照只覆盖扫描可见实例和部分循环元数据，**不完整保留 EXDATE、原始循环结束条件、所有提醒、邀请及 iCloud 元数据，不保证完整还原系列**。恢复快照会生成额外实例，正常刷新时不要重复导入 ICS。
+
+本地 **92 项 Scripting 接口模拟测试通过**，覆盖完整定时流程、默认打开即同步、首次配置不进菜单、三项主菜单、幂等性、中断重抓取、调课/停课/新增、两种系列删除行为、单个循环实例、其他日历保护、备份失败、写后核验、原生 Keychain 返回值、网络跳转、WebView 表达式和运行环境识别。
+
+开发者可执行 `node --test tests/review.test.cjs`。所有测试使用模拟学校响应、内存日历和内存 Keychain，不访问学校账号或真实日历。
+
+**尚未真机验证**：用户安装的 Scripting 版本兼容性、具体 iOS 的删除跨度、iCloud 最终一致性延迟、真实学校当前认证页面、锁屏/后台执行与通知实际送达。iOS 不能保证锁屏时自动打开 App 或准点执行；需要解锁而未能运行时，系统自动化也可能无法交出控制权，脚本无法在未获运行机会时通知。请先解锁手动跑一次快捷指令验证。
+
+本实现对照 Scripting 官方发布版文档仓库提交 `f5f1f1cd0619223b5457575da2699ca3a6c4c2d3`；原项目对照提交 `737b9850662e988f34e65d99ef4b856e54326204`。原 v1.8 头部注明协议基础 `92d6d1ba7acd86f138654e984c77bd816e5da318`。
+
+官方接口依据：[Script](https://scriptingapp.github.io/guide/Script)、[Intent](https://scriptingapp.github.io/guide/Intent/Quick%20Start)、[CalendarEvent](https://scriptingapp.github.io/guide/Device%20Capabilities/CalendarEvent)、[FileManager](https://scriptingapp.github.io/guide/Utilities/FileManager)、[Keychain](https://scriptingapp.github.io/guide/Keychain)。
