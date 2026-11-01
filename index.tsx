@@ -20,9 +20,9 @@ async function __NUFE_START(){
 // NUFE-Local Scripting v2.0.1. Default index launch synchronizes; mode=menu opens management.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
-const HostScript=hostAPI('Script'),HostFiles=hostAPI('FileManager'),HostKeys=hostAPI('Keychain');
-const HostCalendar=hostAPI('Calendar'),HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog');
-const HostNotification=hostAPI('Notification'),hostFetch=hostAPI('fetch');
+const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
+const HostCalendar=hostAPI('Calendar')||{},HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog')||{};
+const HostNotification=hostAPI('Notification')||{},hostFetch=hostAPI('fetch');
 const __query=HostScript.queryParameters||{};
 const __intent=hostAPI('Intent');
 let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')__intentText=String(p.value||'');}catch(_){}
@@ -88,10 +88,20 @@ class WebView{
  async present(){await this.inner.present({navigationTitle:'南财官方验证'});}
 }
 class Notification{
- constructor(){this.identifier='';this.title='';this.body='';this.sound=null;}
+ constructor(){this.identifier='';this.title='';this.body='';this.sound=null;this.openURL=null;this.triggerDate=null;}
  setTriggerDate(date){this.triggerDate=date;}
- async schedule(){return HostNotification.schedule({title:this.title,body:this.body,silent:this.sound===null,threadIdentifier:'NUFE-Local-refresh',tapAction:{type:'openURL',url:HostScript.createRunURLScheme(HostScript.name,{mode:'menu'})}});}
- static async allPending(){const rows=await HostNotification.getAllPendingsOfCurrentScript();return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:null}));}
+ async schedule(){
+   const options={title:this.title,body:this.body,silent:this.sound===null,threadIdentifier:'NUFE-Local-refresh',tapAction:{type:'openURL',url:this.openURL||HostScript.createRunURLScheme(HostScript.name,{mode:'menu'})}};
+   if(this.identifier)options.identifier=this.identifier;
+   if(this.triggerDate){
+     const diff=Math.max(1,Math.round((this.triggerDate.getTime()-Date.now())/1000));
+     const Trigger=hostAPI('TimeIntervalNotificationTrigger');
+     if(Trigger)options.trigger=new Trigger({timeInterval:diff,repeats:false});
+     else options.triggerDate=this.triggerDate;
+   }
+   return HostNotification.schedule(options);
+ }
+ static async allPending(){const rows=await HostNotification.getAllPendingsOfCurrentScript();return rows.map(r=>({identifier:r.identifier,body:r.content?.body||'',nextTriggerDate:r.trigger?.date||null}));}
  static async removePending(ids){if(ids.length)await HostNotification.removePendings(ids);}
 }
 const Data=hostAPI('Data'),Image={fromData:data=>hostAPI('UIImage').fromData(data)};
@@ -100,10 +110,10 @@ const ShareSheet={present:paths=>hostAPI('DocumentPicker').exportFiles({files:pa
 // END SCRIPTING ADAPTER
 
 // SPDX-License-Identifier: GPL-3.0-only
-// NUFE Local Scripting v2.0 (native Scripting adapter + verified calendar core), 2026-11-01. Derived protocol/slider logic: LokmenoWer/nufe-kebiao
+// NUFE Local Scripting v2.0 (native Scripting adapter + verified calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
 // upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
 // No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* v1.9 使用摘要：Scripting 入口 index.tsx；默认直接同步，mode=menu 显示管理菜单。
+/* NUFE-Local 使用摘要：Scripting 入口 index.tsx；默认直接同步，mode=menu 显示管理菜单。
  * 快捷指令打开 scripting://run_single/NUFE-Local；无需参数，直接同步。新增、调整、停课自动同步；删除本工具事件前本地备份，最后仅报告成功/失败。
  * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
  * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
@@ -488,7 +498,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
       if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text))await humanSlider(http);
       else {const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');await QuickLook.present(Image.fromData(image.text));captcha=await input('图形验证码','输入刚才图片中的字符');}
     }
-    onStage(interactive?'本机加密登录密码（WebView 随机数）':'使用 Keychain 凭据进行本机密码加密');
+    onStage(interactive?'本机加密登录密码（原生安全随机数）':'使用 Keychain 凭据进行本机密码加密');
     const encrypted=await encryptPassword(password,fields.salt);password='';
     onStage('提交学校认证请求');
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
@@ -1008,7 +1018,13 @@ function statusText(state){
 // Verified first teaching-week Mondays from the original project's semesters.json.
 // Keep this allow-list local: no additional server, tracking, or third-party endpoint.
 // A guessed school reporting/start date must NEVER silently shift all class events.
-const VERIFIED_TERM_ANCHORS=Object.freeze({'2026-2027-1':'2026-09-07'});
+const VERIFIED_TERM_ANCHORS=Object.freeze({
+  '2024-2025-1':'2024-09-02',
+  '2024-2025-2':'2025-02-24',
+  '2025-2026-1':'2025-09-01',
+  '2025-2026-2':'2026-02-23',
+  '2026-2027-1':'2026-09-07'
+});
 function normalizeTermName(name){return String(name||'').replace(/[－—–]/g,'-').replace(/\s+/g,'').trim();}
 function explicitTeachingMonday(detail){
   if(!detail||typeof detail!=='object')return null;
@@ -1157,6 +1173,10 @@ async function loginPreflight(state,store,progress){
   return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
 }
 async function widget(store) {
+  if(typeof ListWidget==='undefined'){
+    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不支持 Scriptable 样式 ListWidget');
+    return;
+  }
   const state=store.read(),w=new ListWidget(),now=Date.now(),local=new Date(now+8*3600000),day=local.toISOString().slice(0,10),mode=String(args.widgetParameter||'today');
   const midnight=Date.parse(day+'T00:00:00+08:00');let start=midnight,end=start+DAY;
   if(mode==='tomorrow'){start+=DAY;end+=DAY;}if(mode==='week'){start-=((local.getUTCDay()+6)%7)*DAY;end=start+7*DAY;}
@@ -1279,7 +1299,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,coursePage,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
