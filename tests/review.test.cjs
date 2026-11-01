@@ -1,4 +1,4 @@
-// Modified 2026-11-02: classroom, front-end entry and semester-selection regression tests.
+// Modified 2026-11-02: classroom, front-end entry, semester-selection and note-migration regression tests.
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8').replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;');
 async function env({mode="sync",hostEnv="intent"}={}){
@@ -149,3 +149,42 @@ test('widget degrades gracefully when ListWidget is not defined',async()=>{const
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
 test('manual refresh covers all school-listed semesters',async()=>{const {m}=await env();a.deepEqual(Array.from(m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]},{cursor:0},true)),[161,159,160,158]);});
 test('background rotates over all school-listed older semesters',async()=>{const {m}=await env();const state={cursor:0},info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,158,159]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,160,158]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,159,160]);});
+
+test('readable event notes expose teacher and local sync time only',async()=>{
+ const {m}=await env();const s=m.readableNotes(lesson({teachers:['戴靓']}),'2026-11-01T17:22:37.760Z');
+ a.equal(s,'教师：戴靓\\n同步：2026-11-02 01:22'.replace('\\n','\n'));
+ a.doesNotMatch(s,/NUFE_LOCAL|sid|week|JSON|第 2 周/);
+});
+test('indexed unmarked event remains identifiable after note migration',async()=>{
+ const e=await env();const rec=lesson();e.baseline([rec]);const ev=e.add(rec);
+ e.state.semesters['161'].index={[rec.id]:ev.identifier};
+ ev.notes='教师：张老师\n同步：2026-11-02 01:22';
+ const map=e.m.storedEventIndex(e.state);
+ a.equal(e.m.eventRecord(ev,e.state.owner,map).id,rec.id);
+});
+test('legacy title with teacher suffix matches a verified new lesson',async()=>{
+ const e=await env();const rec=lesson({title:'住宅产品开发与设计',teachers:['戴靓']});
+ const ev=e.add(rec);ev.title='住宅产品开发与设计 - 戴靓';
+ a.equal(e.m.matchesOldCourse(ev,rec),true);
+ ev.title='其他个人事项';
+ a.equal(e.m.matchesOldCourse(ev,rec),false);
+});
+
+test('notes migration keeps the same native event ID',async()=>{
+  const e=await env(),rec=lesson();e.baseline([rec]);const ev=e.add(rec);
+  e.state.semesters['161'].index={[rec.id]:ev.identifier};
+  e.store.write(e.state);
+  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+  a.equal(e.db.length,1);
+  a.match(e.db[0].notes,/^教师：/);
+  a.doesNotMatch(e.db[0].notes,/NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
+  a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,rec.id);
+});
+test('verified duplicated legacy title is removed without touching kept lesson',async()=>{
+  const e=await env(),rec=lesson();e.baseline([rec]);const good=e.add(rec);
+  e.state.semesters['161'].index={[rec.id]:good.identifier};
+  const old=e.add(rec,{notes:'legacy calendar import'});old.title='高等数学 - 张老师';
+  e.store.write(e.state);
+  await e.m.removeMatchedOldCourses(e.calendar,e.state,e.store,'161',()=>{});
+  a.equal(e.db.length,1);a.equal(e.db[0].identifier,good.identifier);
+});

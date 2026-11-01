@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: front-end management, multi-semester syncing, and room-only location.
+// Modified 2026-11-02: management, multi-semester sync, room-only location, visible notes and verified duplicate cleanup.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -606,25 +606,48 @@ function writeVerified(store,name,text){
 
 function marker(e,owner) {return '[NUFE_LOCAL_V1 '+owner+' '+e.id+']';}
 function notes(e,owner,stamp) {return marker(e,owner)+'\n'+JSON.stringify({sid:e.sid,id:e.id,week:e.week,su:e.su,eu:e.eu,teachers:e.teachers})+'\n教师：'+e.teachers.join('、')+'\n第 '+e.week+' 周，第 '+e.su+'–'+e.eu+' 节\n同步：'+stamp;}
-function eventRecord(ev,owner) {
+// The local state retains course metadata once event notes are made readable.
+// Legacy marked events remain recognized during migration and recovery.
+function storedEventIndex(state){
+  const map=new Map();
+  for(const term of Object.values(state?.semesters||{})){
+    const records=new Map((term.events||[]).map(e=>[e.id,e]));
+    for(const [id,native] of Object.entries(term.index||{})){
+      const record=records.get(id);
+      if(!record||typeof native!=='string'||!native)continue;
+      if(map.has(native)&&map.get(native).id!==id)fail('STATE_CORRUPT');
+      map.set(native,record);
+    }
+  }
+  return map;
+}
+function eventRecord(ev,owner,byNative=null) {
   const m=/^\[NUFE_LOCAL_V1 ([^ \]]+) ([^ \]]+)\]\n([^\n]+)/.exec(ev.notes||'');
-  if(!m||m[1]!==owner)return null;
-  let meta;try{meta=JSON.parse(m[3]);}catch(_){fail('MARKER_CORRUPT');}
-  assert(meta.id===m[2],'MARKER_CORRUPT');
-  const rec={...meta,title:ev.title||'',location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};validateRecords([rec],'MARKER_CORRUPT');return rec;
+  let meta=null;
+  if(m){
+    if(m[1]!==owner)return null;
+    try{meta=JSON.parse(m[3]);}catch(_){fail('MARKER_CORRUPT');}
+    assert(meta.id===m[2],'MARKER_CORRUPT');
+  }else if(byNative instanceof Map)meta=byNative.get(ev.identifier)||null;
+  if(!meta)return null;
+  const rec={...meta,title:ev.title||'',location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
+  validateRecords([rec],'MARKER_CORRUPT');return rec;
+}
+function readableNotes(e,stamp){
+  return '教师：'+(e.teachers?.length?e.teachers.join('、'):'未提供')+'\n同步：'+localDateTime(stamp);
 }
 class CalendarAdapter {
-  constructor(calendar,owner,store,budget=()=>store.check()){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;}
+  constructor(calendar,owner,store,budget=()=>store.check(),state=null){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;}
   async scan(anchor,events=[]) {
     // Chunked bounded queries avoid EventKit's multi-year predicate limit.
     let lo=Date.parse(anchor+'T00:00:00+08:00')-30*DAY,hi=lo+500*DAY;
     for(const e of events){lo=Math.min(lo,Date.parse(e.start)-DAY);hi=Math.max(hi,Date.parse(e.end)+DAY);}
     assert(Number.isFinite(lo)&&Number.isFinite(hi)&&hi-lo<4*366*DAY,'SCAN_RANGE');const found=new Map();
-    for(let start=lo;start<hi;start+=90*DAY){this.budget();this.store.check();const list=await calendarRows(start,Math.min(hi,start+90*DAY),this.calendar);this.store.check();for(const ev of list){const rec=eventRecord(ev,this.owner);if(rec)found.set(occurrenceKey(ev),{ev,rec});}}
+    for(let start=lo;start<hi;start+=90*DAY){this.budget();this.store.check();const list=await calendarRows(start,Math.min(hi,start+90*DAY),this.calendar);this.store.check();for(const ev of list){const rec=eventRecord(ev,this.owner,this.byNative);if(rec)found.set(occurrenceKey(ev),{ev,rec});}}
     return [...found.values()];
   }
-  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();return ev.identifier;}
-  async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner),'FOREIGN_EVENT');await ev.remove();this.store.check();}
+  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
+  async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner,this.byNative),'FOREIGN_EVENT');await ev.remove();this.store.check();}
 }
 async function applyTransaction(tx,adapter,budget=()=>{}) {
   validateRecords(tx.before);validateRecords(tx.target);
@@ -773,7 +796,7 @@ function recurrenceSnapshot(e){
 function snapshotFields(e){return {recurrenceRules:recurrenceSnapshot(e),hasRecurrenceRules:!!e.hasRecurrenceRules,occurrenceDate:e.occurrenceDate?new Date(e.occurrenceDate).toISOString():null,isDetached:!!e.isDetached,identifier:e.identifier,title:e.title||'',notes:e.notes||'',location:e.location||'',start:e.startDate.toISOString(),end:e.endDate.toISOString(),allDay:!!e.isAllDay};}
 function snapshotSignature(e){return JSON.stringify(snapshotFields(e));}
 async function verifyBaseline(rows,state){
-  const records=rows.map(ev=>({ev,rec:eventRecord(ev,state.owner)})).filter(x=>x.rec);
+  const byNative=storedEventIndex(state);const records=rows.map(ev=>({ev,rec:eventRecord(ev,state.owner,byNative)})).filter(x=>x.rec);
   assertNonRecurring(records);
   for(const term of Object.values(state.semesters))for(const e of term.events||[]){
     const matches=records.filter(x=>x.rec.sid===e.sid&&x.rec.id===e.id);
@@ -786,7 +809,7 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
   assert(Object.values(state.semesters||{}).some(t=>t.lastSuccess&&(t.events||[]).length),'EMPTY_SOURCE');
   const rows=await dedicatedRows(calendar,state,progress);
   await verifyBaseline(rows,state); // All retained new lessons must exist before deleting anything.
-  const legacy=rows.filter(e=>!eventRecord(e,state.owner));
+  const byNative=storedEventIndex(state);const legacy=rows.filter(e=>!eventRecord(e,state.owner,byNative));
   if(!legacy.length){state.lastLegacyCleanupRemaining=0;store.write(state);return 0;}
   const stamp=new Date().toISOString(),base='专用日历清理前-'+stamp.replace(/[:.]/g,'-');
   writeVerified(store,base+'.ics',backupLegacyICS(rows));
@@ -803,14 +826,14 @@ async function replaceDedicatedLegacy(calendar,state,store,progress=()=>{}){
     const fresh=await calendarRows(+original.startDate-1000,+original.endDate+1000,calendar);
     const ev=fresh.find(e=>e.identifier===original.identifier&&+e.startDate===+original.startDate&&+e.endDate===+original.endDate);
     if(!ev)continue; // Earlier remove may already have deleted the entire series.
-    assert(!eventRecord(ev,state.owner)&&snapshotSignature(ev)===snapshotSignature(original),'LEGACY_CHANGED');
+    assert(!eventRecord(ev,state.owner,byNative)&&snapshotSignature(ev)===snapshotSignature(original),'LEGACY_CHANGED');
     assert(!Array.isArray(ev.attendees)||!ev.attendees.length,'LEGACY_INVITATION');
     store.check();await ev.remove();store.check();requests++;
     state.legacyReplacement.requests=requests;store.write(state);
   }
   progress('清理后重新核验新课表和旧内容');
   const after=await dedicatedRows(calendar,state,progress);await verifyBaseline(after,state);
-  const remaining=after.filter(e=>!eventRecord(e,state.owner)).length;
+  const remaining=after.filter(e=>!eventRecord(e,state.owner,byNative)).length;
   state.lastLegacyCleanupAt=new Date().toISOString();state.lastLegacyCleanupCount=requests;
   state.lastLegacyCleanupRemaining=remaining;state.legacyReplacement.status=remaining?'unverified':'verified';store.write(state);
   assert(!remaining,'LEGACY_VERIFY');return requests;
@@ -837,7 +860,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',QR_EXPIRED:'二维码已过期或未确认，请重新运行。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求的二次认证不是短信或动态口令，本版不能转发；请改用扫码登录，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「南财课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'课程事件标记损坏，已停止，请勿删除本工具事件备注。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',QR_EXPIRED:'二维码已过期或未确认，请重新运行。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求的二次认证不是短信或动态口令，本版不能转发；请改用扫码登录，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「南财课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -1080,6 +1103,83 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
   state.anchorSources={...(state.anchorSources||{}),[sid]:'manual-verified'};
   store.write(state);return value;
 }
+
+// Migrate notes only AFTER event ID indexes are durably committed.
+// All new calendar writes still begin with a recovery marker for crash safety.
+async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
+  const term=state.semesters[String(sid)];
+  if(!term||term.notesFormat===2)return;
+  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
+  const rows=(await adapter.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
+  for(const rec of term.events){
+    budget();
+    const items=rows.filter(x=>x.rec.id===rec.id);
+    assert(items.length===1,'CALENDAR_VERIFY');
+    const ev=items[0].ev,visible=readableNotes(rec,term.lastSuccess);
+    if(ev.notes===visible)continue;
+    assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
+    const nativeId=ev.identifier;ev.notes=visible;
+    progress('整理课程备注：'+rec.title);
+    await ev.save();budget();
+    if(ev.identifier!==nativeId){term.index[rec.id]=ev.identifier;store.write(state);}
+  }
+  term.notesFormat=2;store.write(state);
+}
+function matchesOldCourse(ev,rec){
+  if(!ev||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
+  if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
+  const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
+  const before=norm(ev.title),after=norm(rec.title);
+  if(before===after)return true;
+  return (rec.teachers||[]).some(name=>[' - ',' — ','-','－','—'].some(sep=>before===after+sep+norm(name)));
+}
+// Remove only verified duplicates of lessons already saved and backed up.
+// The same bounded calendar is scanned again after removal.
+async function removeMatchedOldCourses(calendar,state,store,sid,budget,progress=()=>{}){
+  const term=state.semesters[String(sid)];
+  if(!term||term.legacyMatchedCleanAt||!term.events?.length)return;
+  const low=Math.min(...term.events.map(e=>Date.parse(e.start)))-DAY;
+  const high=Math.max(...term.events.map(e=>Date.parse(e.end)))+DAY;
+  assert(Number.isFinite(low)&&Number.isFinite(high)&&high-low<=366*DAY,'SCAN_RANGE');
+  const rows=new Map();
+  for(let at=low;at<high;at+=45*DAY){
+    budget();progress('核对旧课程：'+localDateTime(new Date(at).toISOString()).slice(0,10));
+    for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))rows.set(occurrenceKey(ev),ev);
+  }
+  const keep=new Set(Object.values(term.index||{}));
+  const candidates=[...rows.values()].filter(ev=>
+    !keep.has(ev.identifier)&&ev.calendar?.identifier===state.calendarId&&!ev.attendees?.length&&
+    term.events.some(rec=>matchesOldCourse(ev,rec))
+  );
+  if(!candidates.length){term.legacyMatchedCleanAt=new Date().toISOString();store.write(state);return;}
+  const stamp=new Date().toISOString(),base='重复旧课程清理前-'+stamp.replace(/[:.]/g,'-');
+  writeVerified(store,base+'.ics',backupLegacyICS(candidates));
+  writeVerified(store,base+'.json',JSON.stringify({calendarId:calendar.identifier,sid:String(sid),at:stamp,
+    limitation:'Recurring series deletion may affect occurrences beyond the scanned range.',events:candidates.map(snapshotFields)},null,2));
+  state.lastLegacyBackupName=base+'.ics';state.lastLegacyReportName=base+'.json';store.write(state);
+  let count=0;
+  for(const original of candidates){
+    budget();
+    const rowsNow=await calendarRows(+original.startDate-1000,+original.endDate+1000,calendar);
+    const old=rowsNow.find(x=>occurrenceKey(x)===occurrenceKey(original));
+    if(!old)continue;
+    assert(snapshotSignature(old)===snapshotSignature(original),'LEGACY_CHANGED');
+    const lesson=term.events.find(rec=>matchesOldCourse(old,rec));
+    assert(lesson,'LEGACY_CHANGED');
+    const keeper=rowsNow.find(x=>x.identifier===term.index[lesson.id]&&+x.startDate===Date.parse(lesson.start));
+    assert(keeper&&eventRecord(keeper,state.owner,storedEventIndex(state)),'CALENDAR_VERIFY');
+    await old.remove();count++;
+    progress('移除重复旧课程：'+count+' / '+candidates.length);
+  }
+  const leftovers=new Map();
+  for(let at=low;at<high;at+=45*DAY){
+    budget();for(const ev of await calendarRows(at,Math.min(at+45*DAY,high),calendar))leftovers.set(occurrenceKey(ev),ev);
+  }
+  assert(![...leftovers.values()].some(ev=>!keep.has(ev.identifier)&&term.events.some(rec=>matchesOldCourse(ev,rec))),'LEGACY_VERIFY');
+  term.legacyMatchedCleanAt=new Date().toISOString();
+  state.lastLegacyCleanupCount=(state.lastLegacyCleanupCount||0)+count;
+  store.write(state);
+}
 async function finishTx(state,store,adapter,budget) {
   const tx=state.tx;
   const live=await adapter.scan(tx.anchor,[...tx.before,...tx.target]);
@@ -1096,10 +1196,16 @@ async function finishTx(state,store,adapter,budget) {
   const obsolete=tx.before.filter(e=>{const n=tx.target.find(n=>n.id===e.id);return !n||!same(e,n);}).map(e=>'nufe-local-class-'+state.owner+'-'+e.id);
   if(obsolete.length)await Notification.removePending(obsolete);
   const index=await applyTransaction(tx,adapter,budget);
-  state.semesters[tx.sid]={events:tx.target,index,anchor:tx.anchor,name:tx.name,lastSuccess:new Date().toISOString(),skipped:tx.skipped};
+  const oldTerm=state.semesters[tx.sid];
+  const sourceChanges=tx.changes.added+tx.changes.removed+tx.changes.changed;
+  state.semesters[tx.sid]={events:tx.target,index,anchor:tx.anchor,name:tx.name,lastSuccess:new Date().toISOString(),skipped:tx.skipped,
+    notesFormat:(sourceChanges||adapter.hasMarkerWrites)?1:(oldTerm?.notesFormat||1),
+    legacyMatchedCleanAt:sourceChanges?null:(oldTerm?.legacyMatchedCleanAt||null)};
   const count=tx.changes.added+tx.changes.removed+tx.changes.changed;
   if(tx.hadBaseline&&count)state.notice={id:tx.id,body:'检测到 '+count+' 项课程变化：新增 '+tx.changes.added+'，取消 '+tx.changes.removed+'，调整 '+tx.changes.changed+'。'+tx.changes.examples.join('；')};
   state.tx=null;store.write(state);
+  await polishTermNotes(adapter.calendar,state,store,tx.sid,budget);
+  await removeMatchedOldCourses(adapter.calendar,state,store,tx.sid,budget);
   await refreshReminders(state,store);
 }
 function selectTermIds(info,state,allTerms){
@@ -1118,7 +1224,7 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
-  const adapter=new CalendarAdapter(calendar,state.owner,store,budget);
+  const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   if(state.notice){state.notice=null;store.write(state);}
@@ -1313,7 +1419,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
