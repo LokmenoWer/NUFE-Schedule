@@ -490,3 +490,52 @@ test('credential status surfaces dual-key migration instead of hiding it',async(
  e.keys.set('NUFE.Schedule.v1.icloud-credentials',r);
  a.match(e.m.credentialStorageStatus(),/同时存在旧本机凭据/);
 });
+
+
+test('v3 notes refresh after another successful unchanged-term sync',async()=>{
+ const e=await env(),rec=lesson(),ev=e.add(rec);
+ e.baseline([rec]);const term=e.state.semesters['161'];
+ term.index={[rec.id]:ev.identifier};
+ term.notesFormat=3;
+ term.lastSuccess='2026-11-02T00:35:00.000Z';
+ ev.title=e.m.calendarTitle(rec);ev.notes='同步：2026-11-02 08:35';
+ e.store.write(e.state);
+ const original=ev.identifier;
+ const beforeWrites=e.requests.filter(x=>x[0]==='save').length;
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,original);
+ a.equal(e.db[0].title,'高等数学（张老师）');
+ a.equal(e.db[0].notes,'同步：2026-11-02 08:35');
+ a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites);
+ term.lastSuccess='2026-11-02T01:07:00.000Z';
+ e.store.write(e.state);
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,original);
+ a.equal(e.db[0].notes,'同步：2026-11-02 09:07');
+ a.equal(e.state.semesters['161'].notesFormat,3);
+ a.equal(e.requests.filter(x=>x[0]==='save').length,beforeWrites+1);
+});
+test('no-op event save cannot falsely report a timestamp update',async()=>{
+ const e=await env(),rec=lesson(),ev=e.add(rec);
+ e.baseline([rec]);const term=e.state.semesters['161'];
+ term.index={[rec.id]:ev.identifier};
+ term.notesFormat=3;
+ term.lastSuccess='2026-11-02T01:07:00.000Z';
+ e.store.write(e.state);e.setDropSave(true);
+ await a.rejects(()=>e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{}),code('CALENDAR_VERIFY'));
+ a.equal(e.db[0].notes.includes('同步：2026-11-02 09:07'),false);
+ a.equal(e.db.length,1);
+});
+test('timestamp-only refresh updates multiple course events without changing IDs',async()=>{
+ const e=await env(),first=lesson(),second=lesson({id:'lesson-2',start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z',week:2});
+ const a1=e.add(first),a2=e.add(second),ids=[a1.identifier,a2.identifier];
+ e.baseline([first,second]);
+ const term=e.state.semesters['161'];
+ term.index={[first.id]:ids[0],[second.id]:ids[1]};
+ term.notesFormat=3;term.lastSuccess='2026-11-02T01:07:00.000Z';e.store.write(e.state);
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+ a.deepEqual(e.db.map(x=>x.identifier),ids);
+ a.ok(e.db.every(x=>x.notes==='同步：2026-11-02 09:07'));
+});

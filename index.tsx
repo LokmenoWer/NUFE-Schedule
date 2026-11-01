@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: robust combined Set-Cookie parsing with independent pure-domain tests.
+// Modified 2026-11-02: update calendar sync timestamps after each verified term refresh, not only v3 migration.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -1306,29 +1306,57 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
   store.write(state);return value;
 }
 
-// Migrate notes only AFTER event ID indexes are durably committed.
-// All new calendar writes still begin with a recovery marker for crash safety.
+// Update the visible synchronization timestamp on EACH verified term refresh,
+// not only during the one-time v3 migration. New events retain their temporary
+// recovery marker until their native identifiers are durably indexed.
 async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   const term=state.semesters[String(sid)];
-  // v3 moves teacher names to event titles and leaves only sync time in notes.
-  if(!term||term.notesFormat===3)return;
+  if(!term)return;
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   const rows=(await adapter.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
+  const byId=new Map();
+  for(const item of rows){
+    const matches=byId.get(item.rec.id)||[];
+    matches.push(item);byId.set(item.rec.id,matches);
+  }
+  const expectedNotes=readableNotes(null,term.lastSuccess);
+  let modified=0;
   for(const rec of term.events){
     budget();
-    const items=rows.filter(x=>x.rec.id===rec.id);
-    assert(items.length===1,'CALENDAR_VERIFY');
-    const ev=items[0].ev,visible=readableNotes(rec,term.lastSuccess),title=calendarTitle(rec);
-    if(ev.notes===visible&&ev.title===title)continue;
+    const items=byId.get(rec.id)||[];
+    assert(items.length===1&&same(items[0].rec,rec),'CALENDAR_VERIFY');
+    const ev=items[0].ev,title=calendarTitle(rec);
+    if(ev.notes===expectedNotes&&ev.title===title)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
     const nativeId=ev.identifier;
-    ev.title=title;ev.notes=visible;
-    progress('整理课程标题与备注：'+rec.title);
-    await ev.save();budget();
-    if(ev.identifier!==nativeId){term.index[rec.id]=ev.identifier;store.write(state);}
+    ev.title=title;ev.notes=expectedNotes;
+    progress('更新课程同步时间：'+rec.title);
+    await ev.save();budget();modified++;
+    if(ev.identifier!==nativeId){
+      term.index[rec.id]=ev.identifier;
+      store.write(state);
+    }
   }
-  // Commit formatting version only after every event in this term was updated.
-  term.notesFormat=3;store.write(state);
+  // EventKit may acknowledge a write without actually persisting it.
+  // Re-read after changes before presenting the new timestamp as complete.
+  if(modified){
+    const verified=new CalendarAdapter(calendar,state.owner,store,budget,state);
+    const after=(await verified.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
+    const done=new Map();
+    for(const item of after){
+      const matches=done.get(item.rec.id)||[];
+      matches.push(item);done.set(item.rec.id,matches);
+    }
+    for(const rec of term.events){
+      budget();
+      const matches=done.get(rec.id)||[];
+      assert(matches.length===1&&same(matches[0].rec,rec)&&
+        matches[0].ev.title===calendarTitle(rec)&&
+        matches[0].ev.notes===expectedNotes,'CALENDAR_VERIFY');
+    }
+  }
+  // A no-op in the same minute is fine; the next minute is checked again.
+  if(term.notesFormat!==3){term.notesFormat=3;store.write(state);}
 }
 function matchesOldCourse(ev,rec){
   if(!ev||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
