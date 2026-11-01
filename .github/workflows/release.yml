@@ -1,9 +1,13 @@
-name: Publish Release
+name: Publish Stable Release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: nufe-schedule-stable-release
+  cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -12,16 +16,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run all regressions
+      - name: Run all regressions before changing the published archive
         run: node --test tests/*.test.cjs
       - name: Package stable-name Scripting ZIP
         run: bash scripts/package.sh
-      - name: Upload ZIP to GitHub Releases
+      - name: Replace the single stable Release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/NUFE-Schedule.zip --clobber
+          set -euo pipefail
+          release_tag="stable"
+          archive="dist/NUFE-Schedule.zip"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$archive" --clobber
+            gh release edit "$release_tag" --title "NUFE-Schedule"
           else
-            gh release create "$GITHUB_REF_NAME" dist/NUFE-Schedule.zip --title "NUFE-Schedule $GITHUB_REF_NAME" --generate-notes --verify-tag
+            gh release create "$release_tag" "$archive" \
+              --target "$GITHUB_SHA" \
+              --title "NUFE-Schedule" \
+              --notes "固定安装包：main 分支更新并通过测试后覆盖此附件。不使用递增版本号。"
           fi

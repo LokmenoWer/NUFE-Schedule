@@ -4,12 +4,12 @@
 
 - 用状态式算法分割合并的 Set-Cookie 头，兼容 Expires 日期中的逗号及带引号的值；不改变 Cookie 域名白名单和本地存储。
 - 新增不依赖 Scripting 模拟宿主的 Cookie / 日历 Diff 纯逻辑测试，原模拟测试继续保留。
-- GitHub Actions 在 PR 和 main 自动测试；向仓库推送 `v*` 标签后，测试通过才打包三个入口文件并发布固定名称的 ZIP 到 Releases。
+- GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `NUFE-Schedule.zip`，不需要创建新版本号或新 Release。
 - 可运行 `bash scripts/package.sh` 生成 `dist/NUFE-Schedule.zip`。
 
 ## 兼容与发布
 
-旧安装地址 `https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip` 保持不变。首次成功发布后，Release 固定链接是 `https://github.com/b7f2d/NUFE-Schedule/releases/latest/download/NUFE-Schedule.zip`。在真机核验之前不删除旧 ZIP；工作流不会自行创建标签。
+正式固定下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。GitHub Release 必须关联 Tag，因此只在首次发布时创建一次内部固定标签 `stable`，页面标题始终是 `NUFE-Schedule`；以后覆盖同一个 ZIP 附件。旧 Raw 地址 `https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip` 暂时保留，以免已有导入失效，但它可能不再跟随未来提交更新。首次发布与后续覆盖都必须先通过完整测试；测试失败则不替换现有 Release 资产。
 
 ## Gemini 建议的技术取舍
 

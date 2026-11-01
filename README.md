@@ -26,8 +26,10 @@ NUFE-Schedule 是面向NUFE学生的 iPhone 本地课表同步工具。项目通
 
 在 Scripting 中通过以下固定 ZIP 地址导入项目，或将仓库内的 `index.tsx`、`intent.tsx` 和 `script.json` 加入同名项目：
 
+**固定 Release 下载地址（无需版本号）**：
+
 ```text
-https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
+https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip
 ```
 
 首次登录时在同一页面输入学号和密码，点击页面中的「确认」，需要自动重登时勾选「保存到 iCloud 钥匙串」。只有学校要求验证码或二次认证时，才需要额外交互。
@@ -59,13 +61,13 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
 
 ## 远程更新
 
-项目使用固定 ZIP 下载地址作为远程来源。更新仓库代码后应同步重新生成该 ZIP：
+项目使用单个固定 Release 的 ZIP 附件作为远程来源。后续提交到 `main` 并通过自动测试，就会覆盖已有附件：
 
 ```text
-https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
+https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip
 ```
 
-在 Scripting 中为项目关联远程来源后，可使用其提供的更新功能获取仓库中的最新文件。远程更新由 Scripting 管理，不保证 GitHub 提交后立即在设备上生效。
+在 Scripting 中为项目关联上述固定 Release 来源后，可使用其提供的更新功能获取最新文件。此前已使用仓库 Raw URL 的用户，可将远程来源改为此地址；**原 Raw URL 保留兼容，但未来代码改动可能只更新 Release 附件，不再同步根目录旧 ZIP**。远程更新由 Scripting 管理，不保证 GitHub 提交后立即在设备上生效。
 
 已有用户应优先在现有 Scripting 项目内更新，再将项目名称改为 `NUFE-Schedule`，并在快捷指令中重新选择项目。请保留原课表日历和本机状态。原有日历继续按内部 ID 识别，前台打开项目时会尝试将其名称改为“课表”；若修改失败，可在 Apple 日历中手动更名。更新后可分别手动测试管理界面与后台同步。
 
@@ -83,7 +85,7 @@ https://raw.githubusercontent.com/b7f2d/NUFE-Schedule/main/NUFE-Schedule.zip
 
 ## 自动测试与版本发布
 
-GitHub Actions 在 PR 与 main 分支自动测试；推送 `v*` 版本标签后，测试通过才会将 `NUFE-Schedule.zip` 上传 GitHub Releases。原有远程 ZIP 地址继续有效。具体见 [工程化说明](docs/engineering.md)。
+GitHub Actions 在 PR 与 main 分支自动测试。每次 `main` 更新且测试通过后，会自动更新同一个 **NUFE-Schedule** Release 的 `NUFE-Schedule.zip` 附件；不使用递增版本号或要求手动创建版本标签。GitHub 要求 Release 关联 Tag，因此内部固定使用 `stable`，不会改名。详情见 [工程化说明](docs/engineering.md)。
 
 ## 测试
 
