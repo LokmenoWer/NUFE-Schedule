@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: compact two-field login, password-only flow; iCloud credentials and device-only cookies.
+// Modified 2026-11-02: fix post-dismiss WebView timeout with pre-dismiss message bridge and native credential fallback.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -102,7 +102,7 @@ class Request{
 class WebView{
  constructor(){this.inner=new (hostAPI('WebViewController'))({ephemeral:true});__webviews.add(this.inner);}
  set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
- async loadHTML(html){if(!await this.inner.loadHTML(html))throw Error('WebView load failed');}
+ async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
  async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
  async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
@@ -491,38 +491,74 @@ async function fieldsFrom(html,id) {
 }
 // Compact, local-only credential entry. No school webpage or third-party URL
 // is loaded. Password stays hidden and the ephemeral view is disposed promptly.
+// The form sends the result WHILE the WebView is still presented; accessing
+// the DOM after closing the sheet can hang because WebKit suspends detached views.
+// A legacy native prompt fallback keeps login usable if the WebView cannot load.
+async function fallbackCredentialForm({title='NUFE 登录',showRemember=false}={}){
+  const username=(await input(title,'NUFE 学号')).trim();
+  const password=await input(title,'NUFE 密码（安全输入）',true);
+  if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
+  const remember=showRemember&&await confirm('保存自动登录凭据？',
+    '将学号和密码保存到 iCloud 钥匙串，供 Cookie 失效时自动登录。');
+  return {username,password,remember};
+}
 async function credentialForm({title='NUFE 登录',showRemember=false}={}){
-  const w=new WebView();
-  w.shouldAllowRequest=req=>String(req.url||'')==='about:blank';
-  const html=[
-    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-    '<meta name="viewport" content="width=device-width,initial-scale=1">',
-    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; form-action \'none\'; base-uri \'none\'">',
-    '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
-    'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
-    'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
-    '.choice{display:flex;align-items:center;gap:10px;margin-top:20px;font-size:14px;line-height:1.4}.choice input{width:20px;height:20px;flex:none}',
-    '.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:18px}</style></head><body>',
-    '<h2>NUFE 统一身份认证</h2>',
-    '<label class="label" for="account">学号</label><input id="account" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
-    '<label class="label" for="secret">密码</label><input id="secret" type="password" maxlength="512" autocomplete="off">',
-    showRemember?'<label class="choice"><input id="remember" type="checkbox">保存到 iCloud 钥匙串（自动登录）</label>':'',
-    '<p class="hint">填写后点击右上角「完成」。</p></body></html>'
-  ].join('');
+  let w=null;
   try{
+    w=new WebView();
+    w.shouldAllowRequest=req=>String(req.url||'')==='about:blank';
+    let submitted=null;
+    // The bridge is the only path from this local HTML page to the host.
+    // Never persist or log the values returned by the bridge.
+    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
+    await bounded(w.inner.addScriptMessageHandler('nufeCredentials',async value=>{
+      if(submitted)return false;
+      if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
+      const username=value.username.trim(),password=value.password;
+      if(!username||username.length>100||!password||password.length>512)return false;
+      submitted={username,password,remember:showRemember&&value.remember===true};
+      // Close only AFTER data crossed to native code. Do not evaluate JS
+      // in a view already dismissed / suspended by WebKit.
+      try{w.inner.dismiss();}catch(_){}
+      return true;
+    }),12000,'WEBVIEW_TIMEOUT');
+    const html=[
+      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width,initial-scale=1">',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
+      '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
+      'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
+      'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
+      '.choice{display:flex;align-items:center;gap:10px;margin-top:20px;font-size:14px;line-height:1.4}.choice input{width:20px;height:20px;flex:none}',
+      'button{display:block;width:100%;background:#1769dd;color:white;font:600 17px -apple-system;padding:13px;border:0;border-radius:12px;margin-top:22px}',
+      'button:disabled{opacity:.55}.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:14px}</style></head><body>',
+      '<h2>NUFE 统一身份认证</h2>',
+      '<label class="label" for="account">学号</label><input id="account" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
+      '<label class="label" for="secret">密码</label><input id="secret" type="password" maxlength="512" autocomplete="off">',
+      showRemember?'<label class="choice"><input id="remember" type="checkbox">保存到 iCloud 钥匙串（自动登录）</label>':'',
+      '<button type="button" id="submit">确认</button>',
+      '<p class="hint" id="hint">点按「确认」提交；关闭页面则取消。</p>',
+      '<script>(function(){const button=document.getElementById("submit"),hint=document.getElementById("hint");',
+      'button.addEventListener("click",async()=>{const username=document.getElementById("account").value.trim(),password=document.getElementById("secret").value;',
+      'if(!username||!password){hint.textContent="请输入学号和密码。";return;}button.disabled=true;',
+      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password,remember:!!document.getElementById("remember")?.checked});',
+      'if(!ok){hint.textContent="请检查输入内容。";button.disabled=false;}}',
+      'catch(_){hint.textContent="未能提交登录信息，请重试。";button.disabled=false;}});})();</script></body></html>'
+    ].join('');
     await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
     await w.present(title);
-    const result=await bounded(w.evaluateJavaScript(
-      '({username:document.getElementById("account").value,password:document.getElementById("secret").value,remember:!!document.getElementById("remember")?.checked})'
-    ),12000,'WEBVIEW_TIMEOUT');
-    if(!result||typeof result.username!=='string'||typeof result.password!=='string')fail('CANCELLED');
-    const username=result.username.trim(),password=result.password;
-    if(!username&&!password)fail('CANCELLED');
-    if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
-    return {username,password,remember:showRemember&&result.remember===true};
+    if(!submitted)fail('CANCELLED');
+    return submitted;
+  }catch(e){
+    // A broken WebKit instance should not block all password logins.
+    // Only technical WebView errors use the two native secure prompts;
+    // a user cancellation never triggers fallback.
+    if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
+      return await fallbackCredentialForm({title,showRemember});
+    }
+    throw e;
   }finally{
-    try{w.inner.dispose();}catch(_){}
-    __webviews.delete(w.inner);
+    if(w){try{w.inner.dispose();}catch(_){}__webviews.delete(w.inner);}
   }
 }
 async function humanSlider(http) {
@@ -935,7 +971,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机 WebView 在 12 秒内没有响应，已终止等待。请检查查看状态中的失败阶段。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'检测到另一个同步锁。如果已确认无运行中的脚本，可等待 20 分钟自动过期后再试，避免与其他任务同时运行。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -967,7 +1003,7 @@ const ERROR_GUIDE={
   AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再在「账号与日历设置 → 自动登录凭据」中更新密码；不要频繁尝试。'],
   CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','从「账号与日历设置 → 自动登录凭据」删除并重新保存凭据。'],
   CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台运行；检查保存的自动登录凭据。'],
-  WEBVIEW_TIMEOUT:['Scripting 的本机 WebView 在限定时间内没有响应；这是本地组件等待超时，不能认定账号密码有误。','完全退出 Scripting 后重试；如反复出现，请保留阶段日志。'],
+  WEBVIEW_TIMEOUT:['Scripting 的本机输入界面超时。脚本将优先改用系统安全输入框；不能认定账号密码有误。','如果系统安全输入仍无法完成，请重新打开 Scripting 后再试。'],
   NETWORK_TIMEOUT:['一个学校网络请求等待超过 25 秒，没有得到完整响应。','检查 Wi-Fi、蜂窝网络或 VPN，稍后单次重试。'],
   NETWORK_CHAIN_TIMEOUT:['登录/数据请求涉及多次跳转，整组请求超过 75 秒。','检查当前网络是否能打开学校登录入口，并保留阶段日志。'],
   NETWORK_OFFLINE:['系统报告设备没有可用的网络连接。','检查设备联网后再试。'],

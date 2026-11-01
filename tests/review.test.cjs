@@ -330,36 +330,83 @@ test('password login contains no QR entry points',()=>{
  a.equal(source.includes('QR_EXPIRED'),false);
  a.equal(source.includes('选择学校登录方式'),false);
 });
-test('local form displays account and masked password together',async()=>{
- const e=await env();
- let html='',presented=false,disposed=false,requestGuard=null;
- e.sandbox.__sdk.WebViewController=class {
+test('credential form captures both fields before WebView dismissal',async()=>{
+ const e=await env();let html='',presented=false,disposed=false,dismissed=false,handler=null,requestGuard=null;
+ let afterDismissEvaluated=false;
+ e.sandbox.__sdk.WebViewController=class{
   constructor(){this.shouldAllowRequest=null;}
+  async addScriptMessageHandler(name,callback){a.equal(name,'nufeCredentials');handler=callback;}
   async loadHTML(page){html=page;requestGuard=this.shouldAllowRequest;return true;}
-  async present(){presented=true;}
-  async evaluateJavaScript(){return {username:'  test-student  ',password:'test-password',remember:true};}
+  async present(){presented=true;await handler({username:'  test-student  ',password:'test-password',remember:true});}
+  async evaluateJavaScript(){afterDismissEvaluated=true;throw Error('must never evaluate after dismiss');}
+  dismiss(){dismissed=true;}
   dispose(){disposed=true;}
  };
  const result=await e.m.credentialForm({title:'NUFE 登录',showRemember:true});
- a.equal(result.username,'test-student');
- a.equal(result.password,'test-password');
- a.equal(result.remember,true);
- a.equal(presented,true);a.equal(disposed,true);
- a.ok(html.includes('type="password"'));
- a.ok(html.includes('id="account"'));
- a.ok(html.includes('id="remember"'));
+ a.equal(result.username,'test-student');a.equal(result.password,'test-password');a.equal(result.remember,true);
+ a.equal(presented,true);a.equal(dismissed,true);a.equal(disposed,true);a.equal(afterDismissEvaluated,false);
+ a.ok(html.includes('type="password"'));a.ok(html.includes('id="account"'));
+ a.ok(html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
  a.equal(await requestGuard({url:'https://example.org'}),false);
  a.equal(await requestGuard({url:'about:blank'}),true);
 });
-test('local credential form does not opt-in to iCloud automatically',async()=>{
+test('closing the credential form without submitting cancels without saving',async()=>{
  const e=await env();
- e.sandbox.__sdk.WebViewController=class {
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(){}
   async loadHTML(){return true;}
   async present(){}
-  async evaluateJavaScript(){return {username:'student',password:'pass',remember:false};}
+  dispose(){}
+ };
+ await a.rejects(()=>e.m.credentialForm({showRemember:true}),code('CANCELLED'));
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+test('credential form without opt-in does not save to iCloud',async()=>{
+ const e=await env();let handler;
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(_name,callback){handler=callback;}
+  async loadHTML(){return true;}
+  async present(){await handler({username:'student',password:'pass',remember:false});}
+  dismiss(){}
   dispose(){}
  };
  const result=await e.m.credentialForm({showRemember:true});
  a.equal(result.remember,false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+
+test('WebView initialization timeout safely falls back to native secure inputs',async()=>{
+ const e=await env(),prompts=[];let disposed=false;
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(){const x=new Error('WEBVIEW_TIMEOUT');x.code='WEBVIEW_TIMEOUT';throw x;}
+  dispose(){disposed=true;}
+ };
+ e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
+ e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ const r=await e.m.credentialForm({showRemember:true});
+ a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(r.remember,false);
+ a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
+});
+
+test('missing WebView message bridge uses native secure fields without crashing',async()=>{
+ const e=await env();const prompts=[];
+ e.sandbox.__sdk.WebViewController=class{dispose(){}};
+ e.sandbox.__sdk.Dialog.prompt=async options=>{prompts.push(options);return prompts.length===1?'id':'pw';};
+ const result=await e.m.credentialForm();
+ a.equal(result.username,'id');a.equal(result.password,'pw');
+ a.equal(prompts.length,2);
+ a.equal(prompts[1].obscureText,true);
+});
+test('invalid message-bridge payload never dismisses or reveals credentials',async()=>{
+ const e=await env();let handler,dismissed=false;
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(_n,fn){handler=fn;}
+  async loadHTML(){return true;}
+  async present(){const result=await handler({username:'',password:'bad'});a.equal(result,false);}
+  dismiss(){dismissed=true;}
+  dispose(){}
+ };
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(dismissed,false);
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
