@@ -1,7 +1,7 @@
 {
   "name": "NUFE-Local",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "icon": "calendar",
   "color": "#2456A6",
-  "description": "南京财经大学专用课表日历：默认启动自动同步，设备本地认证及循环旧课覆盖。"
+  "description": "南京财经大学课表本地同步：前台管理、快捷指令后台刷新、支持多学期。"
 }

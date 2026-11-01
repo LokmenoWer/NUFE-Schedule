@@ -1,4 +1,5 @@
 // @ts-nocheck
+// Modified 2026-11-02: front-end management, multi-semester syncing, and room-only location.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -7,17 +8,17 @@ async function __NUFE_REPORT_STARTUP(error){
   const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
   const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
-  console.error('[NUFE v2.0.1] '+known+' · '+__NUFE_BOOT_PHASE);
+  console.error('[NUFE v2.1.0] '+known+' · '+__NUFE_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
   catch(_){try{await api('Notification').schedule({title:'南财课表 · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
 }
 async function __NUFE_START(){
   try{
-    console.log('[NUFE v2.0.1] 正在启动');
+    console.log('[NUFE v2.1.0] 正在启动');
 // @ts-nocheck
 
-// NUFE-Local Scripting v2.0.1. Default index launch synchronizes; mode=menu opens management.
+// NUFE-Local Scripting v2.1.0. Foreground opens management; intent runs sync.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
@@ -26,7 +27,7 @@ const HostNotification=hostAPI('Notification')||{},hostFetch=hostAPI('fetch');
 const __query=HostScript.queryParameters||{};
 const __intent=hostAPI('Intent');
 let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')__intentText=String(p.value||'');}catch(_){}
-const __mode=String(__query.mode||__intentText||'sync').trim().toLowerCase()==='menu'?'menu':'sync';
+const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu':'sync')).trim().toLowerCase()==='menu'?'menu':'sync';
 let __shortcutOutput=null;
 const __webviews=new Set();
 const config={runsInApp:HostScript.env==='index',runsInWidget:false,runsWithSiri:true};
@@ -226,7 +227,7 @@ function expand(raw, sid, anchor) {
     const teachers=(a.teachers||[]).map(t=>String(typeof t==='object'&&t ? t.name||t.teacherName||'':t||'').replace(/\s*[(（].*$/,'').trim()).filter(Boolean).sort();
     for(const week of weeks) {
       const date=new Date(Date.parse(anchor+'T00:00:00Z')+((week-1)*7+wd-1)*DAY).toISOString().slice(0,10);
-      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.campus,a.room||a.building].filter(Boolean).join(' '),teachers});
+      events.push({sid:String(sid),title:a.courseName.trim(),week,su,eu,start:new Date(date+'T'+st+':00+08:00').toISOString(),end:new Date(date+'T'+et+':00+08:00').toISOString(),location:[a.room||a.building].filter(Boolean).join(' '),teachers});
     }
   }
   events.sort((a,b)=>a.start.localeCompare(b.start)||a.title.localeCompare(b.title)||a.location.localeCompare(b.location));
@@ -1013,6 +1014,7 @@ function statusText(state){
     '\n原因：'+(recent?reasonFor(recent.code):'尚无可确认的最新错误')+
     '\n建议：'+(recent?actionFor(recent.code):'若一直转圈，检查上方阶段及最近步骤')+
     '\n最近步骤（北京时间）：'+(state.stageHistory||[]).slice(-10).map(x=>'\n'+briefTime(x.at)+' '+x.stage).join('')+
+    '\n已导入学期：'+Object.keys(state.semesters||{}).length+' / '+(state.availableSemesters||[]).length+
     '\n学期读取失败：'+(state.termErrors||[]).map(x=>x.sid+' '+x.code).join('；');
 }
 // Verified first teaching-week Mondays from the original project's semesters.json.
@@ -1100,6 +1102,18 @@ async function finishTx(state,store,adapter,budget) {
   state.tx=null;store.write(state);
   await refreshReminders(state,store);
 }
+function selectTermIds(info,state,allTerms){
+  const available=[...new Set(info.semesters.map(s=>s.id))];
+  assert(available.includes(info.current),'SCHEMA');
+  const rest=available.filter(sid=>sid!==info.current);
+  if(allTerms)return [info.current,...rest];
+  if(!rest.length)return [info.current];
+  const start=((Number(state.cursor)||0)%rest.length+rest.length)%rest.length;
+  const count=Math.min(2,rest.length);
+  const selected=Array.from({length:count},(_,i)=>rest[(start+i)%rest.length]);
+  state.cursor=(start+count)%rest.length;
+  return [info.current,...selected];
+}
 async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
@@ -1115,10 +1129,8 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   const accountKey='NUFE.Local.v1.person';
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
-  // Daily: current term plus one previously imported term, rotating to bound runtime.
-  let sids=allTerms?info.semesters.map(s=>s.id):[info.current];
-  const older=Object.keys(state.semesters).map(Number).filter(s=>s!==info.current&&info.semesters.some(t=>t.id===s));
-  if(!allTerms&&older.length){const i=(state.cursor||0)%older.length;sids.push(older[i]);state.cursor=i+1;}
+  // Foreground covers all school-listed terms; background rotates two older terms.
+  let sids=selectTermIds(info,state,allTerms);store.write(state);
   if(interrupted){assert(info.semesters.some(t=>String(t.id)===interrupted.sid),'TX_TERM_UNAVAILABLE');sids=[Number(interrupted.sid),...sids.filter(s=>String(s)!==interrupted.sid)];}
   state.termErrors=[];
   for(const sid of sids) {
@@ -1142,13 +1154,15 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
     store.write(state);await finishTx(state,store,adapter,budget);
     if(state.notice){state.notice=null;store.write(state);}
     } catch(e) {
-      if(!allTerms||state.tx||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
+      if(state.tx||(!allTerms&&sid===info.current)||['AUTH_REQUIRED','CANCELLED','BUDGET','LOCK_LOST','ACCOUNT_CHANGED'].includes(e.code))throw e;
       state.termErrors.push({sid:String(sid),code:e.code||'LOCAL_ERROR'});store.write(state);
     }
   }
-  if(state.termErrors.length)fail('PARTIAL_SYNC');
-  if(REPLACE_DEDICATED_LEGACY){
-    stage('新课表核验后清理专用日历旧内容');
+  if(state.termErrors.length&&allTerms)fail('PARTIAL_SYNC');
+  // Never purge unrecognized content before every term has a verified baseline.
+  const allTermBaselinesReady=info.semesters.every(x=>state.semesters[String(x.id)]?.lastSuccess);
+  if(REPLACE_DEDICATED_LEGACY&&allTermBaselinesReady&&!state.termErrors.length){
+    stage('全部学期核验完成后清理专用日历旧内容');
     await replaceDedicatedLegacy(calendar,state,store,message=>{budget();stage(message);});
   }
   state.reviewPending=false;state.failures=0;state.lastError=null;state.lastStage='同步检查完成';state.authPaused=false;state.authExpiryNotifiedAt=null;state.authNoticeError=null;state.nextAttempt=0;state.lastCheck=new Date().toISOString();state.audit=[...(state.audit||[]),{at:state.lastCheck,status:state.termErrors.length||state.reviewPending?'partial':'checked'}].slice(-50);store.write(state);
@@ -1220,15 +1234,15 @@ async function manageSavedCredentials(state,store){
   }
 }
 async function refreshResult(ok,code=null){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title='南财课表 · 刷新'+(ok?'成功':'失败');
-  n.body=ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'南财课表 · 部分完成':'南财课表 · 刷新'+(ok?'成功':'失败');
+  n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
   let firstSetup=false;
-  if(__mode!=='menu'&&HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
+  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
@@ -1274,10 +1288,10 @@ async function run() {
     __NUFE_BOOT_PHASE='同步运行';
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
-    await synchronize(state,store,calendar,interactive,false,progress);
-    progress('完成本次同步');state.runStatus='success';state.runCompletedAt=new Date().toISOString();store.write(state);
-    if(interactive)await notice('刷新成功','课表已更新并重新扫描核验。');else await refreshResult(true);
-    if(config.runsWithSiri)Script.setShortcutOutput('刷新成功：南财课表已更新并核验。');
+    await synchronize(state,store,calendar,interactive,interactive,progress);
+    progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
+    if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await refreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null);
+    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：南财课表已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(state&&locked){
@@ -1299,7 +1313,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
