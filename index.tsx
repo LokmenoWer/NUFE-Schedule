@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: management, multiple semesters, simplified notes, verified duplicate cleanup, and safe calendar rename.
+// Modified 2026-11-02: added official semester-start auto-week alignment for historical terms; retained calendar and privacy safeguards.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -1094,8 +1094,10 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
     store.write(state);
     return anchor;
   }
-  // Some official APIs expose an explicit teaching-week start, others only the
-  // generic semester startDate (which might be registration week). Distinguish them.
+  // Prefer an explicit first-teaching-week field when available. The official
+  // semester start date is also a valid schedule baseline for this timetable
+  // system: normalize it to Monday, consistent with the semester API consumer.
+  // Never invent a date when the school returns no usable dates.
   let suggestion=null, lookupError=null;
   try{
     const detail=await http.json(JW+'/student/ws/semester/get/'+sid);
@@ -1106,14 +1108,23 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
       store.write(state);
       return anchor;
     }
+    // Semester detail supplies the start of the school's term even when there
+    // is no dedicated "first teaching week" field. Convert to week-1 Monday
+    // automatically, so historical semesters do not require repeated dialogs.
     suggestion=detailMonday(detail);
+    if(suggestion){
+      anchor=monday(suggestion);
+      state.anchors[sid]=anchor;
+      state.anchorSources={...(state.anchorSources||{}),[sid]:'school-semester-start'};
+      store.write(state);
+      return anchor;
+    }
   }catch(e){lookupError=e&&e.code||'NETWORK';}
   if(!interactive)fail('ANCHOR');
   const a=new Alert();a.title='需核对 '+name+' 校历';
-  a.message='学校尚未提供可确认的第一教学周日期，不能安全自动安排课程。'+
-    (suggestion?'\n学校学期开始日期推算：'+suggestion+'（尚未确认是教学第1周）。':'')+
-    (lookupError?'\n校历接口未成功：'+lookupError+'。':'')+
-    '\n请核对学校校历后填写第一教学周的周一；这只在无法可靠自动识别时出现。';
+  a.message='学校学期接口未返回可用的起始日期，暂时无法安排该学期课程。'+
+    (lookupError?'\n校历接口请求失败：'+lookupError+'。':'')+
+    '\n请依据学校校历填写第 1 周的周一；正常取得学期起始日期时无需手动填写。';
   a.addTextField('YYYY-MM-DD',suggestion||'');a.addAction('保存');a.addCancelAction('取消');
   if(await a.presentAlert()<0)fail('CANCELLED');
   const value=monday(a.textFieldValue(0).trim());

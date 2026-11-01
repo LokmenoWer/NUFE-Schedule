@@ -203,3 +203,33 @@ test('renamed calendar is selected using the stored identifier',async()=>{
  const picked=await e.m.pickCalendar(e.state,e.store,false);
  a.equal(picked.identifier,e.state.calendarId);
 });
+
+test('school semester start automatically anchors historical spring timetable without prompting',async()=>{
+ const e=await env({hostEnv:'intent'});
+ const http={json:async url=>{
+   a.ok(url.endsWith('/student/ws/semester/get/140'));
+   return {startDate:'2024-02-26'};
+ }};
+ const anchor=await e.m.chooseAnchor(140,'2023-2024-2',http,e.state,e.store,false);
+ a.equal(anchor,'2024-02-26');
+ a.equal(e.state.anchors['140'],'2024-02-26');
+ a.equal(e.state.anchorSources['140'],'school-semester-start');
+});
+test('school non-Monday semester date is normalized to Monday automatically',async()=>{
+ const e=await env();
+ const anchor=await e.m.chooseAnchor(140,'2023-2024-2',{json:async()=>({beginDate:'2024-02-28'})},e.state,e.store,false);
+ a.equal(anchor,'2024-02-26');
+});
+test('explicit teaching-week date is preferred over a generic term start date',async()=>{
+ const e=await env();
+ const date=await e.m.chooseAnchor(140,'2023-2024-2',
+   {json:async()=>({startDate:'2024-02-19',firstTeachingWeekMonday:'2024-02-26'})},e.state,e.store,false);
+ a.equal(date,'2024-02-26');
+ a.equal(e.state.anchorSources['140'],'school-teaching-week');
+});
+test('missing official semester dates fails closed without importing or guessing',async()=>{
+ const e=await env();
+ await a.rejects(()=>e.m.chooseAnchor(140,'2023-2024-2',{json:async()=>({name:'2023-2024-2'})},e.state,e.store,false),
+   code('ANCHOR'));
+ a.equal(e.state.anchors['140'],undefined);
+});
