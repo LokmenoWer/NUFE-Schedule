@@ -150,10 +150,11 @@ test('course location omits campus while preserving room or building',async()=>{
 test('manual refresh covers all school-listed semesters',async()=>{const {m}=await env();a.deepEqual(Array.from(m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]},{cursor:0},true)),[161,159,160,158]);});
 test('background rotates over all school-listed older semesters',async()=>{const {m}=await env();const state={cursor:0},info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,158,159]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,160,158]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,159,160]);});
 
-test('readable event notes expose teacher and local sync time only',async()=>{
- const {m}=await env();const s=m.readableNotes(lesson({teachers:['戴靓']}),'2026-11-01T17:22:37.760Z');
- a.equal(s,'教师：戴靓\\n同步：2026-11-02 01:22'.replace('\\n','\n'));
- a.doesNotMatch(s,/NUFE_LOCAL|sid|week|JSON|第 2 周/);
+test('readable event notes contain the synchronization timestamp only',async()=>{
+ const {m}=await env();
+ const text=m.readableNotes(lesson({teachers:['戴靓']}),'2026-11-01T17:22:37.760Z');
+ a.equal(text,'同步：2026-11-02 01:22');
+ a.doesNotMatch(text,/教师|NUFE_LOCAL|sid|week|JSON|第 2 周/);
 });
 test('indexed unmarked event remains identifiable after note migration',async()=>{
  const e=await env();const rec=lesson();e.baseline([rec]);const ev=e.add(rec);
@@ -176,8 +177,9 @@ test('notes migration keeps the same native event ID',async()=>{
   e.store.write(e.state);
   await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
   a.equal(e.db.length,1);
-  a.match(e.db[0].notes,/^教师：/);
-  a.doesNotMatch(e.db[0].notes,/NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
+  a.match(e.db[0].notes,/^同步：/);
+   a.equal(e.db[0].title,'高等数学（张老师）');
+  a.doesNotMatch(e.db[0].notes,/教师|NUFE_LOCAL_V1|\\bweek\\b|\\bsid\\b/);
   a.equal(e.m.eventRecord(e.db[0],e.state.owner,e.m.storedEventIndex(e.state)).id,rec.id);
 });
 test('verified duplicated legacy title is removed without touching kept lesson',async()=>{
@@ -409,4 +411,56 @@ test('invalid message-bridge payload never dismisses or reveals credentials',asy
  await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
  a.equal(dismissed,false);
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+
+test('calendar title appends all teachers once and does not invent unknown teacher',async()=>{
+ const {m}=await env();
+ a.equal(m.calendarTitle(lesson()),'高等数学（张老师）');
+ a.equal(m.calendarTitle(lesson({teachers:['张老师','李老师','张老师']})),'高等数学（张老师、李老师）');
+ a.equal(m.calendarTitle(lesson({teachers:[]})),'高等数学');
+});
+test('old school title and new teacher suffix both map to the same canonical course',async()=>{
+ const e=await env(),rec=lesson(),old=e.add(rec),indexed=e.m.storedEventIndex(e.state);
+ a.equal(e.m.eventRecord(old,e.state.owner,indexed).title,'高等数学');
+ old.title='高等数学（张老师）';
+ a.equal(e.m.eventRecord(old,e.state.owner,indexed).title,'高等数学');
+ a.equal(e.m.matchesOldCourse(old,rec),true);
+});
+test('a newly written marked event recovers the base title without an index',async()=>{
+ const e=await env(),rec=lesson();
+ await new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store).save(rec,null,'2026-11-02T03:00:00Z');
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].title,'高等数学（张老师）');
+ a.equal(e.m.eventRecord(e.db[0],e.state.owner).title,'高等数学');
+});
+test('teacher change keeps logical identity and updates the same native event',async()=>{
+ const e=await env(),rec=lesson(),after=lesson({teachers:['李老师']});
+ e.add(rec);
+ const native=e.db[0].identifier;
+ const p=e.m.plan([rec],[{...after,id:undefined}],()=> 'different-id');
+ a.equal(p.events[0].id,rec.id);
+ await e.m.applyTransaction(tx([rec],[after]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));
+ a.equal(e.db.length,1);
+ a.equal(e.db[0].identifier,native);
+ a.equal(e.db[0].title,'高等数学（李老师）');
+});
+test('v2 readable notes migrate to v3 title and timestamp in place',async()=>{
+ const e=await env(),rec=lesson(),ev=e.add(rec,{notes:'教师：张老师\\n同步：2026-11-02 01:22'.replace('\\n','\n')});
+ e.baseline([rec]);e.state.semesters['161'].notesFormat=2;
+ e.state.semesters['161'].index={[rec.id]:ev.identifier};
+ const before=ev.identifier;
+ e.store.write(e.state);
+ await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
+ a.equal(e.db.length,1);a.equal(e.db[0].identifier,before);
+ a.equal(e.db[0].title,'高等数学（张老师）');
+ a.match(e.db[0].notes,/^同步：/);
+ a.doesNotMatch(e.db[0].notes,/教师：/);
+ a.equal(e.state.semesters['161'].notesFormat,3);
+});
+
+test('full teacher names from the school remain intact in calendar titles',async()=>{
+ const {m}=await env();
+ const rec=m.expand(raw([activity({courseName:'中国税制',teachers:[{name:'高玉胭(001)'}]})]),161,'2026-09-07').events[0];
+ a.equal(rec.teachers[0],'高玉胭');
+ a.equal(m.calendarTitle(rec),'中国税制（高玉胭）');
 });

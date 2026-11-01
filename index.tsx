@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: fix post-dismiss WebView timeout with pre-dismiss message bridge and native credential fallback.
+// Modified 2026-11-02: calendar titles include teachers; notes show only local sync time (safe v3 migration).
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -716,7 +716,20 @@ function writeVerified(store,name,text){
 }
 
 function marker(e,owner) {return '[NUFE_LOCAL_V1 '+owner+' '+e.id+']';}
-function notes(e,owner,stamp) {return marker(e,owner)+'\n'+JSON.stringify({sid:e.sid,id:e.id,week:e.week,su:e.su,eu:e.eu,teachers:e.teachers})+'\n教师：'+e.teachers.join('、')+'\n第 '+e.week+' 周，第 '+e.su+'–'+e.eu+' 节\n同步：'+stamp;}
+function calendarTitle(e){
+  const names=[...new Set((e.teachers||[]).map(x=>String(x).trim()).filter(Boolean))];
+  return e.title+(names.length?'（'+names.join('、')+'）':'');
+}
+function originalTitleFromCalendar(display,teachers){
+  const names=[...new Set((teachers||[]).map(x=>String(x).trim()).filter(Boolean))];
+  const suffix=names.length?'（'+names.join('、')+'）':'';
+  return suffix&&String(display).endsWith(suffix)?String(display).slice(0,-suffix.length):String(display);
+}
+function notes(e,owner,stamp) {
+  // The marker is temporary until the verified native event index is committed.
+  // Include canonical course title so a killed shortcut can recover a new event.
+  return marker(e,owner)+'\n'+JSON.stringify({sid:e.sid,id:e.id,title:e.title,week:e.week,su:e.su,eu:e.eu,teachers:e.teachers})+'\n同步：'+stamp;
+}
 // The local state retains course metadata once event notes are made readable.
 // Legacy marked events remain recognized during migration and recovery.
 function storedEventIndex(state){
@@ -741,11 +754,21 @@ function eventRecord(ev,owner,byNative=null) {
     assert(meta.id===m[2],'MARKER_CORRUPT');
   }else if(byNative instanceof Map)meta=byNative.get(ev.identifier)||null;
   if(!meta)return null;
-  const rec={...meta,title:ev.title||'',location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
+  const indexed=byNative instanceof Map?byNative.get(ev.identifier):null;
+  // New markers include the original course name. Legacy markers do not.
+  // The indexed record is authoritative for unmarked, readable-note events.
+  const canonical=typeof meta.title==='string'&&meta.title?meta.title:
+    typeof indexed?.title==='string'&&indexed.title?indexed.title:
+    originalTitleFromCalendar(ev.title||'',meta.teachers||[]);
+  const actual=String(ev.title||'');
+  const expected=calendarTitle({title:canonical,teachers:meta.teachers||[]});
+  // Treat an unexpected manual title edit as a changed course, not a match.
+  const title=actual===canonical||actual===expected?canonical:actual;
+  const rec={...meta,title,location:ev.location||'',start:ev.startDate.toISOString(),end:ev.endDate.toISOString()};
   validateRecords([rec],'MARKER_CORRUPT');return rec;
 }
 function readableNotes(e,stamp){
-  return '教师：'+(e.teachers?.length?e.teachers.join('、'):'未提供')+'\n同步：'+localDateTime(stamp);
+  return '同步：'+localDateTime(stamp);
 }
 class CalendarAdapter {
   constructor(calendar,owner,store,budget=()=>store.check(),state=null){this.calendar=calendar;this.owner=owner;this.store=store;this.budget=budget;this.byNative=storedEventIndex(state);this.hasMarkerWrites=false;}
@@ -757,7 +780,7 @@ class CalendarAdapter {
     for(let start=lo;start<hi;start+=90*DAY){this.budget();this.store.check();const list=await calendarRows(start,Math.min(hi,start+90*DAY),this.calendar);this.store.check();for(const ev of list){const rec=eventRecord(ev,this.owner,this.byNative);if(rec)found.set(occurrenceKey(ev),{ev,rec});}}
     return [...found.values()];
   }
-  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=e.title;ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
+  async save(e,existing,stamp){this.store.check();if(existing)assert(existing.calendar&&existing.calendar.identifier===this.calendar.identifier&&eventRecord(existing,this.owner,this.byNative),'FOREIGN_EVENT');const ev=existing||new CalendarEvent();ev.calendar=this.calendar;ev.title=calendarTitle(e);ev.location=e.location;ev.notes=notes(e,this.owner,stamp);ev.isAllDay=false;ev.timeZone='Asia/Shanghai';ev.startDate=new Date(e.start);ev.endDate=new Date(e.end);await ev.save();this.byNative.set(ev.identifier,e);this.hasMarkerWrites=true;return ev.identifier;}
   async remove(ev){this.store.check();assert(ev.calendar&&ev.calendar.identifier===this.calendar.identifier&&eventRecord(ev,this.owner,this.byNative),'FOREIGN_EVENT');await ev.remove();this.store.check();}
 }
 async function applyTransaction(tx,adapter,budget=()=>{}) {
@@ -1251,29 +1274,32 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
 // All new calendar writes still begin with a recovery marker for crash safety.
 async function polishTermNotes(calendar,state,store,sid,budget,progress=()=>{}){
   const term=state.semesters[String(sid)];
-  if(!term||term.notesFormat===2)return;
+  // v3 moves teacher names to event titles and leaves only sync time in notes.
+  if(!term||term.notesFormat===3)return;
   const adapter=new CalendarAdapter(calendar,state.owner,store,budget,state);
   const rows=(await adapter.scan(term.anchor,term.events)).filter(x=>x.rec.sid===String(sid));
   for(const rec of term.events){
     budget();
     const items=rows.filter(x=>x.rec.id===rec.id);
     assert(items.length===1,'CALENDAR_VERIFY');
-    const ev=items[0].ev,visible=readableNotes(rec,term.lastSuccess);
-    if(ev.notes===visible)continue;
+    const ev=items[0].ev,visible=readableNotes(rec,term.lastSuccess),title=calendarTitle(rec);
+    if(ev.notes===visible&&ev.title===title)continue;
     assert(!ev.hasRecurrenceRules&&!ev.recurrenceRules?.length,'MANAGED_SERIES');
-    const nativeId=ev.identifier;ev.notes=visible;
-    progress('整理课程备注：'+rec.title);
+    const nativeId=ev.identifier;
+    ev.title=title;ev.notes=visible;
+    progress('整理课程标题与备注：'+rec.title);
     await ev.save();budget();
     if(ev.identifier!==nativeId){term.index[rec.id]=ev.identifier;store.write(state);}
   }
-  term.notesFormat=2;store.write(state);
+  // Commit formatting version only after every event in this term was updated.
+  term.notesFormat=3;store.write(state);
 }
 function matchesOldCourse(ev,rec){
   if(!ev||ev.isAllDay||!ev.startDate||!ev.endDate)return false;
   if(+ev.startDate!==Date.parse(rec.start)||+ev.endDate!==Date.parse(rec.end))return false;
   const norm=s=>String(s||'').normalize('NFC').replace(/\s+/g,' ').trim();
   const before=norm(ev.title),after=norm(rec.title);
-  if(before===after)return true;
+  if(before===after||before===norm(calendarTitle(rec)))return true;
   return (rec.teachers||[]).some(name=>[' - ',' — ','-','－','—'].some(sep=>before===after+sep+norm(name)));
 }
 // Remove only verified duplicates of lessons already saved and backed up.
@@ -1583,7 +1609,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
