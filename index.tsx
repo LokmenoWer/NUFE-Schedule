@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: added official semester-start auto-week alignment for historical terms; retained calendar and privacy safeguards.
+// Modified 2026-11-02: official semester-start alignment and guarded foreground recovery of stale sync locks.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -1025,7 +1025,7 @@ async function repairSyncLock(store){
   const at=parsed&&Number(parsed.at),age=Number.isFinite(at)?Math.round((Date.now()-at)/1000):null;
   const desc=age===null?'未知':age<0?'设备时间早于锁时间':Math.floor(age/60)+' 分 '+age%60+' 秒';
   const a=new Alert();a.title='检查同步锁';
-  a.message='发现 run-lock.json\n锁创建距今：'+desc+'\n\n清除锁不会删除课表、日历或账号。只有在确认其他脚本与快捷指令已停止运行时才能清除。';
+  a.message='发现 run-lock.json\n锁创建距今：'+desc+'\n\n仅清除同步状态锁，不会删除课程、日历或账号。请先停止所有正在运行的 Scripting 脚本及快捷指令自动化；只有确认没有其他同步任务后才能清除。';
   a.addDestructiveAction('确定没有其他任务运行，清除锁');a.addCancelAction('保留锁');
   if(await a.presentAlert()!==0)return;
   if(!store.fm.fileExists(p)||store.fm.readString(p)!==before){await notice('未清除','同步锁在操作期间改变，请停止其他任务后重新检查。');return;}
@@ -1392,8 +1392,13 @@ async function run() {
       if(selected===2){await notice('运行状态',statusText(state));return;}
       if(selected===1){
         const settings=new Alert();settings.title='账号与日历设置';
-        ['自动登录凭据','重新绑定课表日历','清除学校会话','导出最近备份'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
-        const choice=await settings.presentSheet();if(choice<0)return;action=[13,7,5,16][choice];
+        ['自动登录凭据','重新绑定课表日历','清除学校会话','导出最近备份','检查同步锁'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
+        const choice=await settings.presentSheet();if(choice<0)return;action=[13,7,5,16,17][choice];
+        if(action===17){
+          // Lock inspection must work without acquiring an already held lock.
+          // Never clear it automatically: another scheduled run may be active.
+          await repairSyncLock(store);return;
+        }
         if(action===16){
           const names=[state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName].filter(n=>n&&store.fm.fileExists(store.path(n)));
           if(!names.length){await notice('暂无备份','开始写入课表或清理旧内容前会自动生成本地备份。');return;}

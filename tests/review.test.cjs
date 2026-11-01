@@ -233,3 +233,40 @@ test('missing official semester dates fails closed without importing or guessing
    code('ANCHOR'));
  a.equal(e.state.anchors['140'],undefined);
 });
+
+test('foreground management exposes locked-state recovery without waiting for acquire',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.store.write(e.state);
+ const lockPath=e.store.path('run-lock.json');
+ const lockBefore=e.files.get(lockPath);
+ const actions=[];
+ let presented=0,confirmations=0;
+ e.sandbox.Alert=class{
+  constructor(){this.actions=[];}
+  addAction(label){this.actions.push(label);}
+  addCancelAction(){}
+  async presentSheet(){actions.push(this.actions.slice());return presented++===0?1:4;}
+  async presentAlert(){return 0;}
+ };
+ e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;return false;};
+ await e.m.run();
+ a.ok(actions[1].includes('检查同步锁'));
+ a.equal(confirmations,1);
+ a.equal(e.files.get(lockPath),lockBefore);
+ a.equal(e.requests.length,0);
+});
+test('verified cancellation leaves the original lock untouched',async()=>{
+ const e=await env();
+ const path=e.store.path('run-lock.json'),before=e.files.get(path);
+ e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ await e.m.repairSyncLock(e.store);
+ a.equal(e.files.get(path),before);
+});
+test('explicit user approval removes only unchanged lock, never the timetable',async()=>{
+ const e=await env();const path=e.store.path('run-lock.json');
+ e.store.write(e.state);
+ e.sandbox.__sdk.Dialog.confirm=async()=>true;
+ await e.m.repairSyncLock(e.store);
+ a.equal(e.files.has(path),false);
+ a.ok([...e.files.keys()].some(x=>x.endsWith('.json')));
+});
