@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -157,6 +157,77 @@ test('broken Storage mirror never discloses data and can fall back to verified f
  const fallback=core.loadBestWidgetState(files,{get:()=>null});
  a.equal(fallback.kind,'ready');
  a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
+});
+test('four-column timetable shows yesterday, today, tomorrow and the day after',()=>{
+  const now=date('2026-11-03T06:10:00Z'); // Tuesday, Nov 3 14:10 Beijing
+  const m=core.buildRollingDays(make([
+    ev('y','昨天','2026-11-02T02:00:00Z','2026-11-02T04:00:00Z'),
+    ev('t','今天','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
+    ev('n','明天','2026-11-04T02:00:00Z','2026-11-04T03:00:00Z'),
+    ev('a','后天','2026-11-05T02:00:00Z','2026-11-05T03:00:00Z')
+  ]),now);
+  a.equal(m.days.length,4);
+  a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天','后天']);
+  a.deepEqual(Array.from(m.days,d=>d.weekday),['周一','周二','周三','周四']);
+  a.deepEqual(Array.from(m.days,d=>d.dateLabel),['11/2','11/3','11/4','11/5']);
+  a.deepEqual(Array.from(m.days,d=>d.courses[0].status),['done','current','upcoming','upcoming']);
+  a.equal(m.days[1].today,true);
+  a.equal(m.nextAt,date('2026-11-03T06:55:00Z'));
+});
+
+test('Monday view includes previous Sunday and keeps the next two days',()=>{
+ const now=date('2026-11-01T17:00:00Z'); // Monday Nov 2, 1 AM Beijing
+ const m=core.buildRollingDays(make([
+   ev('sun','周日课','2026-11-01T05:00:00Z','2026-11-01T06:00:00Z'),
+   ev('mon','周一课','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
+   ev('wed','周三课','2026-11-04T01:00:00Z','2026-11-04T02:00:00Z')
+ ]),now);
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周日','周一','周二','周三']);
+ a.equal(m.days[0].courses[0].title,'周日课');
+ a.equal(m.days[1].courses[0].title,'周一课');
+ a.equal(m.days[3].courses[0].title,'周三课');
+});
+
+test('Sunday view crosses into next week, showing Monday and Tuesday classes',()=>{
+ const now=date('2026-11-08T10:00:00Z');
+ const m=core.buildRollingDays(make([
+   ev('sat','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
+   ev('mon','下周一','2026-11-09T01:00:00Z','2026-11-09T02:00:00Z'),
+   ev('tue','下周二','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z')
+ ]),now);
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周六','周日','周一','周二']);
+ a.equal(m.days[2].courses[0].title,'下周一');
+ a.equal(m.days[3].courses[0].title,'下周二');
+});
+
+test('four-day view crosses the new year with accurate date labels',()=>{
+ const now=date('2026-12-31T08:00:00Z'); // Dec 31, 16:00 Beijing
+ const m=core.buildRollingDays(make([
+   ev('new-year','元旦课','2027-01-01T01:00:00Z','2027-01-01T02:00:00Z')
+ ]),now);
+ a.deepEqual(Array.from(m.days,d=>d.dateLabel),['12/30','12/31','1/1','1/2']);
+ a.equal(m.days[2].courses[0].title,'元旦课');
+});
+
+test('rolling view only greys classes after end time and changes at exact boundary',()=>{
+ const course=ev('active','中国税制','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z');
+ let m=core.buildRollingDays(make([course]),date('2026-11-02T11:37:00Z'));
+ a.equal(m.days[1].courses[0].status,'current');
+ a.equal(core.widgetReloadDate(m).getTime(),date('2026-11-02T12:50:01Z'));
+ m=core.buildRollingDays(make([course]),date('2026-11-02T12:50:00Z'));
+ a.equal(m.days[1].courses[0].status,'done');
+});
+
+test('widget UI uses four rolling columns with legible multi-line names and classroom',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/buildRollingDays\(snapshot\.state/);
+ a.match(ui,/model\.days\.map\(day/);
+ a.match(ui,/lineLimit=\{compact\?4:6\}/);
+ a.match(ui,/day\.weekday/);
+ a.match(ui,/day\.dateLabel/);
+ a.match(ui,/course\.location/);
+ a.doesNotMatch(ui,/family==='systemLarge'\?9/);
+ a.doesNotMatch(ui,/WeeklyPanel/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});

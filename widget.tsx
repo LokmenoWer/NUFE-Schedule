@@ -2,7 +2,7 @@
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, Script } from 'scripting';
-import { loadBestWidgetState, buildWeek, widgetReloadDate, formatWeekLabel } from './widget-data';
+import { loadBestWidgetState, buildRollingDays, widgetReloadDate, formatWeekLabel } from './widget-data';
 
 const COLORS={
   dark:{light:'#203451',dark:'#EAF2FF'},
@@ -16,62 +16,65 @@ const COLORS={
   headBg:{light:'#E8F0FF',dark:'#1E3B65'}
 };
 
-function CourseCard({course,width,compact=false}){
+function CourseCard({course,compact=false}){
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
-  const font=width<50?9:compact?10:11;
-  return <VStack key={course.id} alignment="leading" spacing={3}
-      padding={compact?5:7}
-      background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
-      frame={{maxWidth:'infinity',minHeight:compact?46:64,alignment:'topLeading'}}>
-    {current?<Text font={width<50?8:9} fontWeight="bold" foregroundStyle={COLORS.blue}>● 正在上课</Text>:null}
-    <Text font={font} fontWeight={current?'bold':'semibold'} lineLimit={compact?2:3}
-      foregroundStyle={fg}>{course.title}</Text>
-    <Text font={width<50?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
-      lineLimit={1}>{course.startLabel}-{course.endLabel}</Text>
-    {!compact&&width>46&&course.location?
-      <Text font={9} foregroundStyle={done?COLORS.muted:COLORS.faint}
-        lineLimit={1}>{course.location}</Text>:null}
+  return <VStack key={course.id} alignment="leading" spacing={compact?3:4}
+      padding={compact?6:9}
+      background={{style:bg,shape:{type:'rect',cornerRadius:10}}}
+      frame={{maxWidth:'infinity',minHeight:compact?75:90,alignment:'topLeading'}}>
+    {current?<Text font={compact?9:10} fontWeight="bold"
+      foregroundStyle={COLORS.blue}>● 上课中</Text>:null}
+    <Text font={compact?11:12} fontWeight={current?'bold':'semibold'}
+      lineLimit={compact?4:6} foregroundStyle={fg}>{course.title}</Text>
+    <Text font={compact?9:10} foregroundStyle={done?COLORS.muted:COLORS.faint}
+      lineLimit={1}>{course.startLabel}–{course.endLabel}</Text>
+    {course.location?<Text font={compact?9:10}
+      foregroundStyle={done?COLORS.muted:COLORS.faint}
+      lineLimit={compact?1:2}>{course.location}</Text>:null}
   </VStack>;
 }
 
-function DayColumn({day,width,compact=false,maxRows=4}){
+function DayColumn({day,width,compact=false,maxRows=3}){
   const shown=day.courses.slice(0,maxRows),overflow=day.courses.length-maxRows;
   const dayColor=day.today?COLORS.blue:COLORS.dark;
-  return <VStack key={String(day.index)} alignment="center" spacing={5}
+  return <VStack key={String(day.index)} alignment="center" spacing={compact?5:7}
       frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}}
-      padding={{top:5,bottom:5}}
-      background={day.today?{style:COLORS.headBg,shape:{type:'rect',cornerRadius:8}}:undefined}>
-      <Text font={width<50?10:11} fontWeight="bold" foregroundStyle={dayColor}>{day.label}</Text>
-      <Text font={9} foregroundStyle={day.today?COLORS.blue:COLORS.faint}>{day.number}日</Text>
+    <VStack spacing={2} frame={{width}} padding={{top:7,bottom:7}}
+      background={day.today?{style:COLORS.headBg,shape:{type:'rect',cornerRadius:9}}:undefined}>
+      <Text font={compact?12:14} fontWeight="bold"
+        foregroundStyle={dayColor}>{day.label}</Text>
+      <Text font={compact?9:10} foregroundStyle={day.today?COLORS.blue:COLORS.faint}>
+        {day.weekday} {day.dateLabel}
+      </Text>
     </VStack>
-    {shown.length?shown.map(c=><CourseCard key={c.id} course={c} width={width} compact={compact}/>):
-      <VStack frame={{width,minHeight:compact?30:48,alignment:'center'}}>
-        <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>
+    {shown.length?shown.map(c=><CourseCard key={c.id} course={c} compact={compact}/>):
+      <VStack frame={{width,minHeight:compact?42:58,alignment:'center'}}>
+        <Text font={11} foregroundStyle={COLORS.muted}>无课</Text>
       </VStack>}
-    {overflow>0?<Text font={9} foregroundStyle={COLORS.faint}>另有{overflow}节</Text>:null}
+    {overflow>0?<Text font={10} foregroundStyle={COLORS.faint}>另有 {overflow} 节</Text>:null}
   </VStack>;
 }
 
-function WeeklyPanel({model,family}){
+// Four readable columns instead of squeezing seven days into the same widget.
+function RollingPanel({model,family}){
   const medium=family==='systemMedium';
   const portrait=family==='systemExtraLargePortrait';
   const width=Widget.displaySize?.width||320;
-  const usable=Math.max(240,width-(medium?20:24));
-  const gap=model.days.length===7?2:4;
-  const colWidth=Math.max(30,Math.floor((usable-gap*(model.days.length-1))/model.days.length));
-  const maxRows=medium?2:portrait?7:4;
-  return <VStack alignment="leading" spacing={medium?7:11}
-    padding={medium?9:12}
+  const gap=medium?5:7,padding=medium?10:13;
+  const usable=Math.max(240,width-padding*2);
+  const colWidth=Math.floor((usable-gap*3)/4);
+  const maxRows=medium?1:portrait?5:3;
+  return <VStack alignment="leading" spacing={medium?8:12} padding={padding}
     widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
     <HStack alignment="center" spacing={6}>
-      <Text font={medium?13:17} fontWeight="bold" foregroundStyle={COLORS.dark}>本周课表</Text>
+      <Text font={medium?14:17} fontWeight="bold"
+        foregroundStyle={COLORS.dark}>近日课表</Text>
       <Spacer/>
       <Text font={medium?9:10} foregroundStyle={COLORS.faint}>
-        {formatWeekLabel(model.start)}
+        {formatWeekLabel(model.start+24*3600000)}
       </Text>
     </HStack>
     <HStack alignment="top" spacing={gap} frame={{maxWidth:'infinity'}}>
@@ -80,9 +83,9 @@ function WeeklyPanel({model,family}){
     </HStack>
     <Spacer minLength={0}/>
     <HStack spacing={5} frame={{maxWidth:'infinity'}}>
-      <Text font={9} foregroundStyle={COLORS.faint}>已下课变灰 · 进行中高亮</Text>
+      <Text font={9} foregroundStyle={COLORS.faint}>下课后变灰 · 上课中高亮</Text>
       <Spacer/>
-      {model.outdated?<Text font={9} foregroundStyle={COLORS.blue}>建议刷新课表</Text>:null}
+      {model.outdated?<Text font={9} foregroundStyle={COLORS.blue}>请刷新课表</Text>:null}
     </HStack>
   </VStack>;
 }
@@ -125,7 +128,7 @@ function EmptyPanel({kind='empty',code=''}) {
   return <VStack alignment="leading" spacing={9} padding={16}
     widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 本周课表</Text>
+    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 近日课表</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
     <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
     {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
@@ -137,11 +140,11 @@ if(snapshot.kind!=='ready'){
   Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code}/>,
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
 }else{
-  const model=buildWeek(snapshot.state,Date.now());
+  const model=buildRollingDays(snapshot.state,Date.now());
   const family=Widget.family;
   Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
     ?<SmallPanel model={model}/>
-    :<WeeklyPanel model={model} family={family}/>,
+    :<RollingPanel model={model} family={family}/>,
     {policy:'after',date:widgetReloadDate(model)});
 }
 

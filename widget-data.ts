@@ -145,6 +145,54 @@ export function buildWeek(state,now=Date.now()){
     updated:Number.isFinite(update)?update:null,outdated,empty:courses.length===0};
 }
 
+// A rolling four-day view: yesterday, today, tomorrow, the day after.
+// It deliberately crosses semester week/month/year boundaries without using
+// the calendar week's Monday as a fixed display window.
+export function buildRollingDays(state,now=Date.now()){
+  const at=now instanceof Date?now.getTime():Number(now);
+  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
+  const local=new Date(at+BEIJING);
+  const todayStart=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-BEIJING;
+  const start=todayStart-DAY,end=start+4*DAY;
+  const courses=[];
+  const semesters=state&&state.semesters&&typeof state.semesters==='object'
+    ?Object.values(state.semesters):[];
+  for(const semester of semesters){
+    if(!semester||!Array.isArray(semester.events))continue;
+    for(const ev of semester.events.slice(0,4000)){
+      const course=safeCourse(ev,start,end);
+      if(course&&course.day<4)courses.push(course);
+    }
+  }
+  courses.sort((a,b)=>a.start-b.start||a.title.localeCompare(b.title));
+  const names=['昨天','今天','明天','后天'];
+  const days=Array.from({length:4},(_,index)=>{
+    const dayStart=start+index*DAY;
+    const date=new Date(dayStart+BEIJING);
+    const weekday='周'+NAMES[(date.getUTCDay()+6)%7];
+    return {
+      index,label:names[index],weekday,
+      number:date.getUTCDate(),month:date.getUTCMonth()+1,
+      dateLabel:(date.getUTCMonth()+1)+'/'+date.getUTCDate(),
+      today:index===1,
+      courses:courses.filter(c=>c.day===index).map(c=>({
+        ...c,status:c.end<=at?'done':c.start<=at?'current':'upcoming'
+      }))
+    };
+  });
+  const boundaries=[todayStart+DAY];
+  for(const c of courses){
+    if(c.start>at)boundaries.push(c.start);
+    if(c.end>at)boundaries.push(c.end);
+  }
+  const nextAt=Math.min(...boundaries.filter(t=>t>at));
+  const updated=state&&typeof state.lastCheck==='string'?Date.parse(state.lastCheck):NaN;
+  return {start,at,days,courses,today:1,nextAt,
+    updated:Number.isFinite(updated)?updated:null,
+    outdated:Number.isFinite(updated)&&at-updated>7*DAY,
+    empty:courses.length===0};
+}
+
 export function widgetReloadDate(model){
   // WidgetKit schedules are best effort. Do not continuously request minute
   // updates; only request an update at the next class boundary or day rollover.

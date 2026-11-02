@@ -69,7 +69,7 @@ test('only the Release archive is distributed',()=>{
 test('widget distribution includes the native entry and safe cache model',()=>{
   const entry=read('widget.tsx');
   assert.match(entry,/Widget\.present\(/);
-  assert.match(entry,/buildWeek\(/);
+  assert.match(entry,/buildRollingDays\(/);
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
   assert.match(read('scripts/package.sh'),/"5"/);
