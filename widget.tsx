@@ -68,7 +68,6 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
       </Text>
       <Text font={compact?9:10} foregroundStyle={COLORS.blue}
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
-      <Text font={8} foregroundStyle={COLORS.faint}>测试</Text>
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
@@ -154,9 +153,7 @@ function SmallPanel({model}){
 function EmptyPanel({kind='empty',code=''}) {
   const failure=kind==='invalid';
   const label=failure?'缓存读取失败':'尚无课表缓存';
-  const guidance=code==='TEST_TERM_NOT_FOUND'?
-    '请打开 NUFE-Schedule 一次；若仍无课程，请确认已同步 2024-2025-2 学期':
-    code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
+  const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={22}
@@ -176,7 +173,7 @@ if(snapshot.kind!=='ready'){
 }else{
   const model=buildWidgetModel(snapshot.state,Date.now());
   if(!model){
-    Widget.present(<EmptyPanel kind="empty" code="TEST_TERM_NOT_FOUND"/>,
+    Widget.present(<EmptyPanel kind="empty" code="NO_COURSES"/>,
       {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
   }else{
     const family=Widget.family;

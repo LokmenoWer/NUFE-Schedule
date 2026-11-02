@@ -225,7 +225,7 @@ export function selectVisibleCourses(day,limit=1){
 // TEMPORARY TEST MODE: set this to null to restore the live timetable.
 // Only the widget presentation is affected; the sync engine and Apple Calendar
 // continue to use real semester dates and the normal current schedule.
-const WIDGET_PREVIEW_TERM='2024-2025-2';
+const WIDGET_PREVIEW_TERM=null;
 
 // Shift the historical teaching week by an integral number of weeks so the
 // original weekdays and time-of-day are preserved. Choose a *real* teaching
@@ -235,7 +235,7 @@ export function buildHistoricalPreview(state,now=Date.now()){
   const at=now instanceof Date?now.getTime():Number(now);
   if(!Number.isFinite(at))throw Error('WIDGET_TIME');
   const src=state?.preview;
-  if(!src||src.term!==WIDGET_PREVIEW_TERM||!Array.isArray(src.events))return null;
+  if(!src||src.term!=='2024-2025-2'||!Array.isArray(src.events))return null;
   const valid=[];
   for(const e of src.events){
     if(!e||typeof e.start!=='string'||typeof e.end!=='string')continue;

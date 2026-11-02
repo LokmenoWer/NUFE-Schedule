@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,selectVisibleCourses,selectTodayPair,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,selectVisibleCourses,selectTodayPair,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -292,7 +292,7 @@ test('2024-2025-2 week two preview anchors source Monday to today regardless of 
  original[0].teacher='高老师';
  const state={lastCheck:'2026-11-02T06:00:00Z',
    preview:{term:'2024-2025-2',events:original},semesters:{live:{events:[]}}};
- const model=core.buildWidgetModel(state,now);
+ const model=core.buildHistoricalPreview(state,now);
  a.equal(model.previewTerm,'2024-2025-2');
  a.equal(model.previewSourceWeek,'2025-03-03');
  a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天','后天']);
@@ -316,7 +316,7 @@ test('preview retains real weekday course ordering but does not use the late-nig
    ev('b','第二节','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
    ev('c','第三节','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z')
  ]},semesters:{live:{events:[]}}};
- const m=core.buildWidgetModel(state,now);
+ const m=core.buildHistoricalPreview(state,now);
  a.equal(m.days[1].courses.length,3);
  a.deepEqual(Array.from(core.selectTodayPair(m.days[1]).courses,x=>x.title),['第一节','第二节']);
  a.equal(core.selectTodayPair(m.days[1]).hiddenAfter,1);
@@ -367,15 +367,25 @@ test('today pair advances after each class ends and keeps upcoming classes order
  classes[2].status='done';
  a.deepEqual(pick(),['第三节']);
 });
-test('preview is isolated and never invents historical data',()=>{
+test('live widget restores real data and ignores all preview payloads',()=>{
  const now=date('2026-11-03T06:10:00Z');
  const live=make([ev('real','当期课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
- a.equal(core.buildWidgetModel(live,now),null);
- live.preview={term:'2025-2026-2',events:[ev('old','另一学期','2026-04-07T05:30:00Z','2026-04-07T06:55:00Z')]};
- a.equal(core.buildWidgetModel(live,now),null);
- live.preview={term:'2024-2025-2',events:[]};
- a.equal(core.buildWidgetModel(live,now),null);
+ const original=core.buildWidgetModel(live,now);
+ a.equal(original.days[1].courses[0].title,'当期课程');
+ a.equal(original.days[1].courses[0].status,'current');
+ a.equal(original.at,now);
+ a.equal(original.previewTerm,undefined);
+ live.preview={term:'2024-2025-2',events:[
+   ev('past','历史学期','2025-03-03T05:30:00Z','2025-03-03T06:55:00Z')
+ ]};
+ const withPreview=core.buildWidgetModel(live,now);
+ a.deepEqual(Array.from(withPreview.days[1].courses,x=>x.title),['当期课程']);
+ a.equal(withPreview.at,now);
+ a.equal(withPreview.previewTerm,undefined);
+ const sourceOnly={preview:live.preview,semesters:{live:{events:[]}}};
+ a.equal(core.buildWidgetModel(sourceOnly,now).days[1].courses.length,0);
 });
+
 test('private mirror keeps live courses separate from 2024-2025-2 preview',()=>{
  const obj={version:1,lastCheck:'2026-11-02T07:00:00Z',
    events:[ev('real','真实课表','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')],
@@ -402,14 +412,14 @@ test('widget labels only dates and useful class details, not redundant auto-upda
   a.match(ui,/chosen\.status==='done'\?COLORS\.doneBg/);
   a.match(ui,/foregroundStyle=\{fg\}/);
 });
-test('widget renders the expanded today pair with a subtle historical-test marker',()=>{
+test('widget renders expanded today pair without test-only labels',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/function TodayPairColumn/);
  a.match(ui,/selectTodayPair\(day\)/);
  a.match(ui,/focus\.hiddenAfter>0/);
  a.match(ui,/\+\{focus\.hiddenAfter\}节课/);
  a.match(ui,/expanded&&day\.today/);
- a.match(ui,/>测试<\/Text>/);
+ a.doesNotMatch(ui,/>测试<\/Text>/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
 test('course card retains comfortable internal padding independent of widget outer inset',()=>{
