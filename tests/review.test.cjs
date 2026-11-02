@@ -2,8 +2,8 @@
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
- .replace("import { presentNativeCredentialForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);');
+ .replace("import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';",
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -49,15 +49,38 @@ test('foreground progress uses real stage labels without false percentages or se
  const progress=e.m.createProgress(e.state,e.store,true);
  progress('检查目标日历');await progress.start();
  progress('读取学期 161');await Promise.resolve();
- a.ok(evaluations.some(x=>x.includes('正在获取课程信息')));
+ a.ok(evaluations.some(x=>x.includes('正在刷新课表')));
  progress('等待输入学校登录信息');await Promise.resolve();
  a.ok(modal.includes('dismiss'));
  progress('提交学校认证请求');await Promise.resolve();
+ a.equal(modal.filter(x=>x.startsWith('open:')).length,1);
+ progress('认证完成后读取课表页面');await Promise.resolve();
  a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
+ progress('读取学期 161');progress('写入学期 161 的日历事件');
+ progress('读取学期 162');progress('写入学期 162 的日历事件');
+ await Promise.resolve();
+ a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
+ a.doesNotMatch(JSON.stringify(evaluations),/正在更新 Apple 日历|正在获取课程信息/);
  progress.finish();
  a.ok(modal.includes('dispose'));
  a.equal(e.m.safeProgressLabel('写入学期 161 的日历事件'),'正在更新 Apple 日历');
  a.doesNotMatch(JSON.stringify(evaluations),/password=|Cookie=|学号/);
+});
+test('user-dismissed progress stays closed across multiple semester updates',async()=>{
+ const e=await env({hostEnv:'index'});let opens=0;
+ e.sandbox.__sdk.WebViewController=class{
+  async loadHTML(){return true;}
+  present(){opens++;return Promise.resolve();}
+  evaluateJavaScript(){return Promise.resolve(true);}
+  dismiss(){}dispose(){}
+ };
+ const p=e.m.createProgress(e.state,e.store,true);
+ p('检查目标日历');await p.start();
+ await Promise.resolve();
+ p('读取学期 161');p('写入学期 161 的日历事件');
+ p('读取学期 162');p('写入学期 162 的日历事件');
+ a.equal(opens,1);
+ p.finish();
 });
 test('progress HTML navigation stays internal and render loop gets a chance to show',async()=>{
  const e=await env({hostEnv:'index'}),views=[];
@@ -710,6 +733,32 @@ test('a different iCloud account is not silently overwritten on migration',async
  a.equal(e.keys.get('NUFE.Schedule.v1.icloud-credentials'),cloud);
 });
 
+test('native SMS input prepares the OTP UI and never saves a code',async()=>{
+ const e=await env({hostEnv:'index'}),requests=[];
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeTextMock=async options=>{requests.push(options);return '123456';};
+ const code=await e.m.input('学校二次认证','短信验证码',false,{kind:'sms'});
+ a.equal(code,'123456');a.equal(requests.length,1);
+ a.equal(requests[0].kind,'sms');
+ a.equal(requests[0].label,'短信验证码');
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+test('native input cancellation never prompts twice',async()=>{
+ const e=await env({hostEnv:'index'});let prompted=0;
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeTextMock=async()=>null;
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompted++;throw Error('WRONG_PROMPT');};
+ await a.rejects(()=>e.m.input('学校二次认证','短信验证码',false,{kind:'sms'}),code('CANCELLED'));
+ a.equal(prompted,0);
+});
+test('native image captcha passes local image without exposing the answer',async()=>{
+ const e=await env({hostEnv:'index'}),observed=[];const picture={id:'mock-image'};
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeTextMock=async options=>{observed.push(options);return 'ABCD';};
+ a.equal(await e.m.input('图形验证码','输入图片中的字符',false,{kind:'captcha',image:picture}),'ABCD');
+ a.equal(observed[0].image,picture);
+ a.equal(observed[0].kind,'captcha');
+});
 test('password login contains no QR entry points',()=>{
  a.equal(source.includes('qrLogin('),false);
  a.equal(source.includes('qrCode/getToken'),false);

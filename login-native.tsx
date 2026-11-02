@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, useState,
+  TextField, SecureField, Button, Image, useState,
 } from 'scripting';
 
 function LoginView({ title }: { title: string }) {
@@ -64,4 +64,64 @@ export async function presentNativeCredentialForm(title = 'NUFE 登录') {
   const password = typeof result.password === 'string' ? result.password : '';
   if (!username || username.length > 100 || !password || password.length > 512) return null;
   return { username, password };
+}
+
+
+// All short interactive challenges use an iOS-native text entry sheet.
+// OTPs use oneTimeCode so iOS can offer the system SMS/Password code suggestion.
+// Image-based CAPTCHA is rendered inside this sheet; no image ever leaves device.
+type NativeInputKind = 'sms' | 'totp' | 'captcha' | 'text' | 'secure';
+type NativeInputOptions = {
+  title: string;
+  label: string;
+  kind?: NativeInputKind;
+  image?: any;
+};
+function NativeInputView({title,label,kind='text',image}:NativeInputOptions) {
+  const dismiss=Navigation.useDismiss();
+  const [value,setValue]=useState('');
+  const secret=kind==='secure';
+  const otp=kind==='sms'||kind==='totp';
+  const response=value.trim();
+  const maxLength=kind==='captcha'?32:otp?48:120;
+  const valid=response.length>0&&response.length<=maxLength;
+
+  return <NavigationStack>
+    <List navigationTitle={title} navigationBarTitleDisplayMode="inline"
+      toolbar={{
+        cancellationAction:<Button title="取消" action={()=>dismiss(null)}/>
+      }}>
+      <Section header={<Text>{label}</Text>}>
+        {image?<Image image={image} resizable={true} scaleToFit={true}
+          frame={{width:280,height:155}} />:null}
+        {secret?
+          <SecureField title={label} prompt="请输入" value={value}
+            onChanged={setValue} />:
+          <TextField title={label}
+            prompt={otp?'请输入或填充验证码':'请输入'}
+            value={value} onChanged={setValue}
+            autofocus={!image}
+            textContentType={otp?'oneTimeCode':undefined}
+            keyboardType={otp?'numberPad':'default'}
+            textInputAutocapitalization="never"
+            autocorrectionDisabled={true}/>}
+      </Section>
+      <Section>
+        <Button title="确认" disabled={!valid}
+          action={()=>{if(valid)dismiss(response);}}/>
+      </Section>
+    </List>
+  </NavigationStack>;
+}
+
+export async function presentNativeTextForm(options:NativeInputOptions) {
+  const result=await Navigation.present({
+    element:<NativeInputView {...options}/>,
+    modalPresentationStyle:'pageSheet'
+  });
+  if(typeof result!=='string')return null;
+  const code=result.trim();
+  const max=options.kind==='captcha'?32:
+    options.kind==='sms'||options.kind==='totp'?48:120;
+  return code&&code.length<=max?code:null;
 }

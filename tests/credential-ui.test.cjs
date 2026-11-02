@@ -55,3 +55,31 @@ test('credential form prefers native controls only in the foreground',()=>{
  assert.match(form,/if\(!native\)fail\('CANCELLED'\)/);
  assert.match(form,/原生登录窗口不可用/);
 });
+
+test('native verification inputs support oneTimeCode SMS, authenticator and picture CAPTCHA',()=>{
+ const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
+ assert.match(native,/export async function presentNativeTextForm/);
+ assert.match(native,/kind==='sms'\|\|kind==='totp'/);
+ assert.match(native,/textContentType=\{otp\?'oneTimeCode':undefined\}/);
+ assert.match(native,/keyboardType=\{otp\?'numberPad':'default'\}/);
+ assert.match(native,/<Image image=\{image\} resizable=\{true\} scaleToFit=\{true\}/);
+ assert.match(native,/onChanged=\{setValue\}/);
+ assert.match(native,/if\(typeof result!=='string'\)return null/);
+ assert.doesNotMatch(native,/SMS\.read|Message\.read|Clipboard|console\.log/);
+});
+test('interactive CAPTCHA, MFA and plain text route to native sheets',()=>{
+ const whole=fs.readFileSync(__dirname+'/../index.tsx','utf8');
+ assert.match(whole,/presentNativeTextForm\(\{/);
+ assert.match(whole,/kind:type==='3'\?'sms':'totp'/);
+ assert.match(whole,/\{kind:'captcha',image:rendered\}/);
+ assert.match(whole,/rendered=UI\.fromData\(image\.text\)/);
+ assert.match(whole,/return await legacyInput\(title,label,secure\)/);
+});
+test('progress overlay keeps one stable label until auth completes and prevents repeat presentation',()=>{
+ const whole=fs.readFileSync(__dirname+'/../index.tsx','utf8');
+ assert.match(whole,/dismissedByUser=true/);
+ assert.match(whole,/if\(awaitingVerification\)/);
+ assert.match(whole,/latest='正在刷新课表'/);
+ assert.match(whole,/if\(label===lastPainted\)break/);
+ assert.doesNotMatch(whole,/latest=safeProgressLabel\(message\)/);
+});
