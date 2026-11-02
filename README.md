@@ -27,7 +27,9 @@
 
    <a href="docs/images/scripting-remote-zip.webp"><img src="docs/images/scripting-remote-zip.webp" alt="Scripting 远程导入页面中的链接输入框" width="330"></a>
 
-3. 导入成功后，Scripting 主界面将显示 NUFE-Schedule 项目。
+3. 导入成功后，Scripting 主界面将显示 NUFE-Schedule 项目。点击项目卡片，即可打开课表管理界面。
+
+   <a href="docs/images/scripting-project-card.webp"><img src="docs/images/scripting-project-card.webp" alt="Scripting 主界面中的 NUFE-Schedule 项目卡片" width="330"></a>
 
 ### 二、首次配置与同步
 
@@ -53,4 +55,12 @@
 
 如果手动刷新时已有任务在运行，可以选择等待完成，或请求前一任务安全退出后再开始。本项目不会强制终止正在执行的 iOS 进程。
 
-项目更新继续使用上方的固定安装地址。已安装用户建议在现有 Scripting 项目中刷新远程脚本，不要删除原课表日历或本机状态。涉及账号、日历或后台权限的异常，可在「运行状态」中查看提示。
+如需手动更新已导入的远程项目：
+
+1. 在 Scripting 主界面找到 NUFE-Schedule，点击项目卡片右上角的「···」菜单。
+2. 选择「刷新脚本」，由 Scripting 重新获取项目的远程资源。
+3. 更新完成后，点击 NUFE-Schedule 打开项目，并选择「立即刷新」检查课表同步是否正常。
+
+   <a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="Scripting 项目菜单中的「刷新脚本」选项" width="330"></a>
+
+远程资源仍使用上方的固定安装地址。更新时请保留现有项目与「课表」日历，避免重复导入或丢失原有配置。涉及账号、日历或后台权限的异常，可在「运行状态」中查看提示。
