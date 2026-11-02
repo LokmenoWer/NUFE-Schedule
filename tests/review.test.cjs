@@ -56,6 +56,30 @@ test('foreground progress uses real stage labels without false percentages or se
  a.equal(e.m.safeProgressLabel('写入学期 161 的日历事件'),'正在更新 Apple 日历');
  a.doesNotMatch(JSON.stringify(evaluations),/password=|Cookie=|学号/);
 });
+test('progress HTML navigation stays internal and render loop gets a chance to show',async()=>{
+ const e=await env({hostEnv:'index'}),views=[];
+ e.sandbox.__sdk.WebViewController=class{
+   constructor(){views.push(this);}
+   async loadHTML(html){a.match(html,/Content-Security-Policy/);return true;}
+   present(options){a.equal(options.navigationTitle,'正在刷新课表');return Promise.resolve();}
+   evaluateJavaScript(){return Promise.resolve(true);}
+   dismiss(){}dispose(){}
+ };
+ const p=e.m.createProgress(e.state,e.store,true);
+ p('检查目标日历');await p.start();p.finish();
+ a.equal(views.length,1);
+ a.equal(views[0].shouldAllowRequest,undefined); // Do not reject WebKit's HTML navigation.
+});
+test('when progress page cannot load, report the failure and still permit syncing',async()=>{
+ const e=await env({hostEnv:'index'}),alerts=[];
+ e.sandbox.__sdk.WebViewController=class{async loadHTML(){return false;}dispose(){}};
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
+ const p=e.m.createProgress(e.state,e.store,true);
+ await p.start();p('请求学期 161 课表数据');p.finish();
+ a.equal(alerts.length,1);
+ a.match(alerts[0].message,/PROGRESS_LOAD/);
+ a.equal(e.state.lastStage,'请求学期 161 课表数据');
+});
 test('background sync never opens progress UI or adds modal prompts',async()=>{
  const e=await env({hostEnv:'intent'}),opens=[];
  e.sandbox.__sdk.WebViewController=class {constructor(){opens.push(true);}};
@@ -427,7 +451,37 @@ test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m
 test('widget degrades gracefully when ListWidget is not defined',async()=>{const e=await env();e.sandbox.config.runsInWidget=true;await a.doesNotReject(async()=>{await e.m.run();});});
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('manual refresh covers all school-listed semesters',async()=>{const {m}=await env();a.deepEqual(Array.from(m.selectTermIds({current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]},{cursor:0},true)),[161,159,160,158]);});
+test('first manual refresh imports every school-listed semester once',async()=>{
+ const {m}=await env();
+ a.deepEqual(Array.from(m.selectTermIds(
+   {current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]},
+   {cursor:0,semesters:{}},true)),[161,159,160,158]);
+});
+test('routine manual refresh skips successfully checked historical semesters',async()=>{
+ const {m}=await env();
+ const recent=new Date().toISOString(),info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
+ const state={cursor:0,semesters:{
+   159:{lastSuccess:recent},160:{lastSuccess:recent},158:{lastSuccess:recent}
+ }};
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
+});
+test('manual refresh checks one stale historical term and retries failed terms',async()=>{
+ const {m}=await env();
+ const recent=new Date().toISOString(),old=new Date(Date.now()-18*86400000).toISOString(),older=new Date(Date.now()-22*86400000).toISOString();
+ const info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
+ const state={semesters:{159:{lastSuccess:old},160:{lastSuccess:recent},158:{lastSuccess:older}}};
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158]);
+ state.semesters[158].lastSuccess=recent;state.termErrors=[{sid:'160',code:'NETWORK'}];
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,159]); // oldest stale first
+ state.semesters[159].lastSuccess=recent;
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,160]);
+});
+test('manual refresh completes never-imported semesters before applying stale limits',async()=>{
+ const {m}=await env(),info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
+ const state={semesters:{159:{lastSuccess:new Date().toISOString()}}};
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,160,158]);
+});
 test('background rotates over all school-listed older semesters',async()=>{const {m}=await env();const state={cursor:0},info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,158,159]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,160,158]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,159,160]);});
 
 test('readable event notes contain the synchronization timestamp only',async()=>{
