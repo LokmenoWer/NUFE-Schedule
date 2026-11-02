@@ -280,6 +280,11 @@ test('replacing a lost calendar warns about duplicates and rewrites every lesson
  const s=e.store.read();a.equal(s.lastError,null);a.equal(s.runStatus,'success');a.equal(s.calendarId,'calendar-new');
  a.equal(e.db.length,1);a.equal(e.db[0].calendar.identifier,'calendar-new');
 });
+test('run superseded during the creation dialog does not create a calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);
+ e.sandbox.__sdk.Dialog.confirm=async()=>{a.equal(e.store.requestCancelActive(),true);return true;};
+ await a.rejects(e.m.pickCalendar(e.state,e.store),code('SYNC_SUPERSEDED'));a.deepEqual(h.created,[]);
+});
 test('background sync never creates a calendar',async()=>{
  const e=await env(),created=[];e.state.calendarId='missing-calendar';
  e.sandbox.__sdk.Calendar.create=async o=>{created.push(o);throw Error('unexpected');};

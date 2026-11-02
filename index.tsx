@@ -1218,7 +1218,7 @@ async function createDedicatedCalendar(){
 }
 // An empty list means the script cannot read calendars; never create one in that state.
 // A pending transaction belongs to the old calendar, so it can never move to a new one.
-async function offerDedicatedCalendar(state,all){
+async function offerDedicatedCalendar(state,store,all){
   assert(all.length,'CALENDAR_PERMISSION');
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
   const bound=!!state.calendarId&&Object.values(state.semesters||{}).some(t=>(t.events||[]).length);
@@ -1226,6 +1226,8 @@ async function offerDedicatedCalendar(state,all){
      '没有找到可写入的「课表」日历。是否新建一个专用日历并绑定？不会改动其他日历。'+
      (bound?'\n之前同步使用的日历当前不可见。请先确认它没有被隐藏或关闭 iCloud 同步；如果旧日历之后恢复，其中的课程会与新日历重复。':'')+
      '\n此日历只放可替换的课表，不要混放私人日程。'))fail('CANCELLED');
+  // The dialog can outlast this run's ownership; a superseded run must not create a calendar.
+  store.check();
   return await createDedicatedCalendar();
 }
 // Allow the old title during migration, but prefer the new name.
@@ -1251,7 +1253,7 @@ async function pickCalendar(state,store,force=false){
   }
   let picked,created=false;
   if(!candidates.length){
-    picked=await offerDedicatedCalendar(state,all);created=true;
+    picked=await offerDedicatedCalendar(state,store,all);created=true;
   }else if(candidates.length===1){
     picked=candidates[0];
     if(!await confirm('绑定目标日历',
