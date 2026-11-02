@@ -244,29 +244,15 @@ export function buildHistoricalPreview(state,now=Date.now()){
     valid.push({e,start,end});
   }
   if(!valid.length)return null;
-  const weeks=new Set();
-  for(const c of valid){
-    const m=weekStartBeijing(c.start);
-    weeks.add(m);
-    weeks.add(m+7*DAY); // previous Sunday can belong to the 4-day window
-  }
+  // Fixed teaching week 2: 2025-03-03 through 2025-03-09, Beijing time.
+  const secondMonday=Date.UTC(2025,2,3)-BEIJING;
   const currentMonday=weekStartBeijing(at);
   const todayOffset=Math.floor((at-currentMonday)/DAY);
-  let best=null;
-  for(const monday of [...weeks].sort((a,b)=>a-b)){
-    // Yesterday/today/tomorrow/day-after; candidate week may cross a week edge.
-    const from=monday+(todayOffset-1)*DAY,to=from+4*DAY;
-    const selected=valid.filter(c=>c.start>=from&&c.start<to);
-    if(!selected.length)continue;
-    const todayStart=from+DAY;
-    const todayCount=selected.filter(c=>c.start>=todayStart&&c.start<todayStart+DAY).length;
-    const uniqueDays=new Set(selected.map(c=>Math.floor((c.start-from)/DAY))).size;
-    const score=todayCount*100+selected.length*10+uniqueDays*3;
-    if(!best||score>best.score||(score===best.score&&monday>best.monday))
-      best={monday,selected,score};
-  }
-  if(!best)return null;
-  const shift=currentMonday-best.monday;
+  const from=secondMonday+(todayOffset-1)*DAY;
+  const to=from+4*DAY;
+  const selected=valid.filter(c=>c.start>=from&&c.start<to);
+  const best={monday:secondMonday,selected};
+  const shift=currentMonday-secondMonday;
   const events=best.selected.map(({e,start,end})=>({
     id:plainText(e.id,100),title:plainText(e.title,90),
     location:plainText(e.location,65),teacher:plainText(e.teacher,75),

@@ -221,7 +221,7 @@ test('rolling view only greys classes after end time and changes at exact bounda
 test('widget UI uses four rolling columns with legible multi-line names and classroom',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
- a.match(ui,/model\.days\.map\(day/);
+ a.match(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)\.map\(day/);
  a.match(ui,/lineLimit=\{compact\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
@@ -281,19 +281,19 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
 test('2024-2025-2 preview maps a rich historical week to current weekdays',()=>{
  const now=date('2026-11-03T06:10:00Z'); // Tuesday 14:10 Beijing
  const original=[
-   ev('m','周一课程','2025-04-07T01:00:00Z','2025-04-07T02:20:00Z'),
-   ev('a','周二早课','2025-04-08T02:00:00Z','2025-04-08T03:30:00Z'),
-   ev('b','周二当前','2025-04-08T05:30:00Z','2025-04-08T06:55:00Z'),
-   ev('c','周二下一节','2025-04-08T07:10:00Z','2025-04-08T08:35:00Z'),
-   ev('d','周二剩余','2025-04-08T09:00:00Z','2025-04-08T10:00:00Z'),
-   ev('t','周三课程','2025-04-09T01:00:00Z','2025-04-09T02:30:00Z')
+   ev('m','周一课程','2025-03-03T01:00:00Z','2025-03-03T02:20:00Z'),
+   ev('a','周二早课','2025-03-04T02:00:00Z','2025-03-04T03:30:00Z'),
+   ev('b','周二当前','2025-03-04T05:30:00Z','2025-03-04T06:55:00Z'),
+   ev('c','周二下一节','2025-03-04T07:10:00Z','2025-03-04T08:35:00Z'),
+   ev('d','周二剩余','2025-03-04T09:00:00Z','2025-03-04T10:00:00Z'),
+   ev('t','周三课程','2025-03-05T01:00:00Z','2025-03-05T02:30:00Z')
  ];
  original[2].teacher='高老师';
  const state={lastCheck:'2026-11-02T06:00:00Z',
    preview:{term:'2024-2025-2',events:original},semesters:{live:{events:[]}}};
  const model=core.buildWidgetModel(state,now);
  a.equal(model.previewTerm,'2024-2025-2');
- a.equal(model.previewSourceWeek,'2025-04-07');
+ a.equal(model.previewSourceWeek,'2025-03-03');
  a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天','后天']);
  a.equal(model.days[0].courses[0].title,'周一课程');
  a.equal(model.days[1].courses.length,4);
@@ -311,7 +311,7 @@ test('a single today lesson returns a balanced day layout',()=>{
  a.equal(sample.courses.length,1);a.equal(sample.hiddenAfter,0);
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/expanded=\(today\?\.courses\?\.length\|\|0\)>1/);
- a.match(ui,/slots=expanded\?5:4/);
+ a.match(ui,/slots=4/);
  a.match(ui,/todayWidth=expanded\?colWidth\*2\+extraGap:colWidth/);
 });
 test('when current class is last, today shows only that current class',()=>{
@@ -384,7 +384,7 @@ test('widget renders the expanded today pair with a subtle historical-test marke
 });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/safeInset=medium\?4:8/);
+ a.match(ui,/safeInset=medium\?9:12/);
  a.match(ui,/padding=\{safeInset\}/);
  a.match(ui,/width-2\*safeInset/);
  a.match(ui,/doneBg:'#E5E7EB'/);

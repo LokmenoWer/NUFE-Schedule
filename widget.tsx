@@ -92,14 +92,14 @@ function RollingPanel({model,family}){
     {proxy=>{
       const width=proxy.size.width,height=proxy.size.height;
       // Keep both header edges and all four columns clear of rounded corners.
-      const safeInset=medium?4:8,gap=medium?3:5;
+      const safeInset=medium?9:12,gap=medium?4:6;
       const today=model.days.find(d=>d.today);
       const expanded=(today?.courses?.length||0)>1;
       // Five equally-sized course slots when today has multiple classes:
       // yesterday / today-current / today-next / tomorrow / day-after.
       // Otherwise keep the original four balanced day columns.
-      const slots=expanded?5:4;
-      const extraGap=expanded?gap:0;
+      const slots=4;
+      const extraGap=0;
       const colWidth=Math.max(32,Math.floor(
         (width-2*safeInset-gap*3-extraGap)/slots));
       const todayWidth=expanded?colWidth*2+extraGap:colWidth;
@@ -110,7 +110,7 @@ function RollingPanel({model,family}){
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
-          {model.days.map(day=>expanded&&day.today
+          {model.days.filter(day=>!expanded||day.index!==3).map(day=>expanded&&day.today
             ?<TodayPairColumn key="today-pair" day={day}
               width={todayWidth} compact={medium} gap={gap}/>
             :<DayColumn key={String(day.index)} day={day}
