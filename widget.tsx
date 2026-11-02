@@ -12,7 +12,12 @@ const COLORS={
   activeBg:'#238BFF'
 };
 
-function CourseCard({course,compact=false,width}){
+function CourseCard({course,compact=false,width,density='normal'}){
+  // Larger single today card; compact side-by-side today cards.
+  const smallText=density==='pair',largeText=density==='single';
+  const titleSize=smallText?9:largeText?(compact?13:15):(compact?11:13);
+  const detailSize=smallText?8:largeText?(compact?10:11):(compact?9:10);
+  const cardPadding=smallText?5:compact?7:8;
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
@@ -20,25 +25,25 @@ function CourseCard({course,compact=false,width}){
   // card. Previously the visible background used its intrinsic text width
   // and sat to the left inside an otherwise centered, fixed-width frame.
   const cardStyle=modifiers()
-    .padding(compact?6:8)
+    .padding(cardPadding)
     .frame(width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'})
     .background({style:bg,shape:{type:'rect',cornerRadius:9}});
-  return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
+  return <VStack key={course.id} alignment="leading" spacing={smallText?2:3}
       modifiers={cardStyle}>
-    <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
-      lineLimit={compact?4:5} foregroundStyle={fg}>{course.title}</Text>
-    <Text font={compact?8:9} foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
+    <Text font={titleSize} fontWeight={current?'bold':'semibold'}
+      lineLimit={smallText?4:5} foregroundStyle={fg}>{course.title}</Text>
+    <Text font={detailSize} foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
       lineLimit={2}>{course.startLabel}–{course.endLabel}</Text>
-    {course.location?<Text font={compact?8:9}
-      foregroundStyle={done?COLORS.muted:COLORS.faint}
+    {course.location?<Text font={detailSize}
+      foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
       lineLimit={2}>{course.location}</Text>:null}
-    {course.teacher?<Text font={compact?8:9}
-      foregroundStyle={done?COLORS.muted:COLORS.faint}
+    {course.teacher?<Text font={detailSize}
+      foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
       lineLimit={1}>{course.teacher}</Text>:null}
   </VStack>;
 }
 
-function DayColumn({day,width,compact=false,maxRows=1}){
+function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
   const window=selectVisibleCourses(day,maxRows);
   const dayColor=day.today?COLORS.blue:COLORS.dark;
   return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
@@ -54,7 +59,8 @@ function DayColumn({day,width,compact=false,maxRows=1}){
       <HStack key={c.id} alignment="top" spacing={0}
         frame={{width,alignment:'center'}}>
         <Spacer minLength={0}/>
-        <CourseCard course={c} compact={compact} width={width-8}/>
+        <CourseCard course={c} compact={compact} width={width-8}
+          density={emphasize?'single':'normal'}/>
         <Spacer minLength={0}/>
       </HStack>):
       <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
@@ -81,10 +87,10 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-        <CourseCard course={focus.courses[0]} compact={compact} width={cardWidth}/>
+        <CourseCard course={focus.courses[0]} compact={compact} width={cardWidth} density="pair"/>
       </VStack>
       <VStack alignment="center" spacing={4} frame={{width:cardWidth,alignment:'top'}}>
-        {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact} width={cardWidth}/>:null}
+        {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact} width={cardWidth} density="pair"/>:null}
         {focus.hiddenAfter>0?<Text font={compact?9:10}
           foregroundStyle={COLORS.faint}>+{focus.hiddenAfter}节课</Text>:null}
       </VStack>
@@ -100,18 +106,17 @@ function RollingPanel({model,family}){
   return <GeometryReader>
     {proxy=>{
       const width=proxy.size.width,height=proxy.size.height;
-      // Keep both header edges and all four columns clear of rounded corners.
+      // Exactly three day groups; headings and cards share the same center.
       const safeInset=medium?9:12,gap=medium?4:6;
-      const today=model.days.find(d=>d.today);
+      const days=model.days.slice(0,3);
+      const today=days.find(d=>d.today);
       const todayFocus=selectTodayPair(today);
       const expanded=todayFocus.courses.length>1;
-      // Exactly four course slots: yesterday / today-current / today-next / tomorrow,
-      // or yesterday / focused today / tomorrow / day-after when only one remains.
-      const slots=4;
-      const extraGap=0;
-      const colWidth=Math.max(32,Math.floor(
-        (width-2*safeInset-gap*3-extraGap)/slots));
-      const todayWidth=expanded?colWidth*2+extraGap:colWidth;
+      const usableWidth=Math.max(96,width-2*safeInset-2*gap);
+      // Three equal widths for a single today card. A visible pair gets
+      // half of the available width; each neighbor gets one quarter.
+      const sideWidth=Math.floor(usableWidth/(expanded?4:3));
+      const todayWidth=usableWidth-sideWidth*2;
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       return <VStack alignment="leading" spacing={0}
         padding={safeInset}
@@ -119,12 +124,14 @@ function RollingPanel({model,family}){
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
-          {model.days.filter(day=>!expanded||day.index!==3).map(day=>expanded&&day.today
+          {days.map(day=>day.today&&expanded
             ?<TodayPairColumn key="today-pair" day={day}
               width={todayWidth} compact={medium} gap={gap}/>
             :<DayColumn key={String(day.index)}
               day={day.today?{...day,courses:todayFocus.courses}:day}
-              width={colWidth} compact={medium} maxRows={maxRows}/> )}
+              width={day.today?todayWidth:sideWidth}
+              compact={medium} maxRows={maxRows}
+              emphasize={day.today&&!expanded}/> )}
         </HStack>
       </VStack>;
     }}

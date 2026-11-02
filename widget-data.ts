@@ -174,7 +174,7 @@ export function buildRollingDays(state,now=Date.now()){
   if(!Number.isFinite(at))throw Error('WIDGET_TIME');
   const local=new Date(at+BEIJING);
   const todayStart=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-BEIJING;
-  const start=todayStart-DAY,end=start+4*DAY;
+  const start=todayStart-DAY,end=start+3*DAY;
   const courses=[];
   const semesters=state&&state.semesters&&typeof state.semesters==='object'
     ?Object.values(state.semesters):[];
@@ -182,12 +182,12 @@ export function buildRollingDays(state,now=Date.now()){
     if(!semester||!Array.isArray(semester.events))continue;
     for(const ev of semester.events.slice(0,4000)){
       const course=safeCourse(ev,start,end);
-      if(course&&course.day<4)courses.push(course);
+      if(course&&course.day<3)courses.push(course);
     }
   }
   courses.sort((a,b)=>a.start-b.start||a.title.localeCompare(b.title));
-  const names=['昨天','今天','明天','后天'];
-  const days=Array.from({length:4},(_,index)=>{
+  const names=['昨天','今天','明天'];
+  const days=Array.from({length:3},(_,index)=>{
     const dayStart=start+index*DAY;
     const date=new Date(dayStart+BEIJING);
     const weekday='周'+NAMES[(date.getUTCDay()+6)%7];
@@ -229,7 +229,7 @@ const WIDGET_PREVIEW_TERM=null;
 
 // Shift the historical teaching week by an integral number of weeks so the
 // original weekdays and time-of-day are preserved. Choose a *real* teaching
-// week with the most classes today, then with the most classes in the 4-day
+// week with the most classes today, then with the most classes in the three-day
 // window. Never invent courses, and never mix different historical weeks.
 export function buildHistoricalPreview(state,now=Date.now()){
   const at=now instanceof Date?now.getTime():Number(now);
@@ -251,7 +251,7 @@ export function buildHistoricalPreview(state,now=Date.now()){
   const currentMonday=weekStartBeijing(at);
   const todayOffset=Math.floor((at-currentMonday)/DAY);
   const todayStart=currentMonday+todayOffset*DAY;
-  const from=secondMonday-DAY,to=secondMonday+3*DAY;
+  const from=secondMonday-DAY,to=secondMonday+2*DAY;
   const selected=valid.filter(c=>c.start>=from&&c.start<to);
   if(!selected.length)return null;
   const best={monday:secondMonday,selected};

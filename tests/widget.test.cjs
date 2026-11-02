@@ -158,57 +158,52 @@ test('broken Storage mirror never discloses data and can fall back to verified f
  a.equal(fallback.kind,'ready');
  a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
 });
-test('four-column timetable shows yesterday, today, tomorrow and the day after',()=>{
-  const now=date('2026-11-03T06:10:00Z'); // Tuesday, Nov 3 14:10 Beijing
-  const m=core.buildRollingDays(make([
-    ev('y','昨天','2026-11-02T02:00:00Z','2026-11-02T04:00:00Z'),
-    ev('t','今天','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
-    ev('n','明天','2026-11-04T02:00:00Z','2026-11-04T03:00:00Z'),
-    ev('a','后天','2026-11-05T02:00:00Z','2026-11-05T03:00:00Z')
-  ]),now);
-  a.equal(m.days.length,4);
-  a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天','后天']);
-  a.deepEqual(Array.from(m.days,d=>d.weekday),['周一','周二','周三','周四']);
-  a.deepEqual(Array.from(m.days,d=>d.dateLabel),['11/2','11/3','11/4','11/5']);
-  a.deepEqual(Array.from(m.days,d=>d.courses[0].status),['done','current','upcoming','upcoming']);
-  a.equal(m.days[1].today,true);
-  a.equal(m.nextAt,date('2026-11-03T06:55:00Z'));
-});
-
-test('Monday view includes previous Sunday and keeps the next two days',()=>{
- const now=date('2026-11-01T17:00:00Z'); // Monday Nov 2, 1 AM Beijing
+test('three-day timetable displays yesterday today tomorrow without day-after courses',()=>{
+ const now=date('2026-11-03T06:10:00Z');
  const m=core.buildRollingDays(make([
-   ev('sun','周日课','2026-11-01T05:00:00Z','2026-11-01T06:00:00Z'),
-   ev('mon','周一课','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
-   ev('wed','周三课','2026-11-04T01:00:00Z','2026-11-04T02:00:00Z')
+  ev('y','昨天','2026-11-02T02:00:00Z','2026-11-02T04:00:00Z'),
+  ev('t','今天','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z'),
+  ev('n','明天','2026-11-04T02:00:00Z','2026-11-04T03:00:00Z'),
+  ev('a','后天不应显示','2026-11-05T02:00:00Z','2026-11-05T03:00:00Z')
  ]),now);
- a.deepEqual(Array.from(m.days,d=>d.weekday),['周日','周一','周二','周三']);
- a.equal(m.days[0].courses[0].title,'周日课');
- a.equal(m.days[1].courses[0].title,'周一课');
- a.equal(m.days[3].courses[0].title,'周三课');
+ a.equal(m.days.length,3);
+ a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天']);
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周一','周二','周三']);
+ a.deepEqual(Array.from(m.days,d=>d.dateLabel),['11/2','11/3','11/4']);
+ a.deepEqual(Array.from(m.days,d=>d.courses[0].status),['done','current','upcoming']);
+ a.equal(m.days[1].today,true);
+ a.equal(m.courses.length,3);
+ a.ok(m.courses.every(c=>c.title!=='后天不应显示'));
+ a.equal(m.nextAt,date('2026-11-03T06:55:00Z'));
 });
-
-test('Sunday view crosses into next week, showing Monday and Tuesday classes',()=>{
- const now=date('2026-11-08T10:00:00Z');
+test('Monday three-day view includes Sunday and Tuesday, not Wednesday',()=>{
  const m=core.buildRollingDays(make([
-   ev('sat','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
-   ev('mon','下周一','2026-11-09T01:00:00Z','2026-11-09T02:00:00Z'),
-   ev('tue','下周二','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z')
- ]),now);
- a.deepEqual(Array.from(m.days,d=>d.weekday),['周六','周日','周一','周二']);
+  ev('sun','周日课','2026-11-01T05:00:00Z','2026-11-01T06:00:00Z'),
+  ev('mon','周一课','2026-11-02T01:00:00Z','2026-11-02T02:00:00Z'),
+  ev('tue','周二课','2026-11-03T01:00:00Z','2026-11-03T02:00:00Z'),
+  ev('wed','周三课','2026-11-04T01:00:00Z','2026-11-04T02:00:00Z')
+ ]),date('2026-11-01T17:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周日','周一','周二']);
+ a.deepEqual(Array.from(m.days,d=>d.courses[0].title),['周日课','周一课','周二课']);
+ a.equal(m.courses.length,3);
+});
+test('Sunday three-day view crosses weeks and excludes Tuesday',()=>{
+ const m=core.buildRollingDays(make([
+  ev('sat','周六课','2026-11-07T01:00:00Z','2026-11-07T02:00:00Z'),
+  ev('mon','下周一','2026-11-09T01:00:00Z','2026-11-09T02:00:00Z'),
+  ev('tue','下周二不显示','2026-11-10T01:00:00Z','2026-11-10T02:00:00Z')
+ ]),date('2026-11-08T10:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.weekday),['周六','周日','周一']);
  a.equal(m.days[2].courses[0].title,'下周一');
- a.equal(m.days[3].courses[0].title,'下周二');
+ a.equal(m.courses.length,2);
 });
-
-test('four-day view crosses the new year with accurate date labels',()=>{
- const now=date('2026-12-31T08:00:00Z'); // Dec 31, 16:00 Beijing
+test('three-day view crosses the new year with accurate date labels',()=>{
  const m=core.buildRollingDays(make([
-   ev('new-year','元旦课','2027-01-01T01:00:00Z','2027-01-01T02:00:00Z')
- ]),now);
- a.deepEqual(Array.from(m.days,d=>d.dateLabel),['12/30','12/31','1/1','1/2']);
+  ev('new-year','元旦课','2027-01-01T01:00:00Z','2027-01-01T02:00:00Z')
+ ]),date('2026-12-31T08:00:00Z'));
+ a.deepEqual(Array.from(m.days,d=>d.dateLabel),['12/30','12/31','1/1']);
  a.equal(m.days[2].courses[0].title,'元旦课');
 });
-
 test('rolling view only greys classes after end time and changes at exact boundary',()=>{
  const course=ev('active','中国税制','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z');
  let m=core.buildRollingDays(make([course]),date('2026-11-02T11:37:00Z'));
@@ -218,15 +213,16 @@ test('rolling view only greys classes after end time and changes at exact bounda
  a.equal(m.days[1].courses[0].status,'done');
 });
 
-test('widget UI uses four rolling columns with legible multi-line names and classroom',()=>{
+test('widget UI renders only three day headings and keeps full course details',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
- a.match(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)\.map\(day/);
- a.match(ui,/lineLimit=\{compact\?4:5\}/);
+ a.match(ui,/const days=model\.days\.slice\(0,3\)/);
+ a.match(ui,/\{days\.map\(day=>/);
+ a.match(ui,/lineLimit=\{smallText\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
- a.doesNotMatch(ui,/family==='systemLarge'\?9/);
+ a.doesNotMatch(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)/);
  a.doesNotMatch(ui,/WeeklyPanel/);
 });
 test('course overflow stays chronological and reports remaining count',()=>{
@@ -278,16 +274,16 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
-test('2024-2025-2 week two preview anchors source Monday to today regardless of weekday or clock time',()=>{
- const now=date('2026-11-03T14:13:00Z'); // Tuesday, 22:13 Beijing
+test('historical preview uses the same three-day window and original weekdays',()=>{
+ const now=date('2026-11-03T14:13:00Z');
  const original=[
-   ev('m1','证券投资学','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
-   ev('m2','毛泽东思想和中国特色社会主义理论体系概论','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
-   ev('m3','Python大数据分析','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z'),
-   ev('m4','Python大数据分析','2025-03-03T07:15:00Z','2025-03-03T08:50:00Z'),
-   ev('t1','大学语文','2025-03-04T05:30:00Z','2025-03-04T07:05:00Z'),
-   ev('w1','中级财务会计','2025-03-05T02:15:00Z','2025-03-05T03:55:00Z'),
-   ev('wrong-week','不应混入其他周','2025-03-10T00:20:00Z','2025-03-10T02:00:00Z')
+  ev('m1','证券投资学','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
+  ev('m2','毛泽东思想和中国特色社会主义理论体系概论','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
+  ev('m3','Python大数据分析','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z'),
+  ev('m4','Python大数据分析','2025-03-03T07:15:00Z','2025-03-03T08:50:00Z'),
+  ev('t1','大学语文','2025-03-04T05:30:00Z','2025-03-04T07:05:00Z'),
+  ev('w1','中级财务会计','2025-03-05T02:15:00Z','2025-03-05T03:55:00Z'),
+  ev('wrong-week','不应混入其他周','2025-03-10T00:20:00Z','2025-03-10T02:00:00Z')
  ];
  original[0].teacher='高老师';
  const state={lastCheck:'2026-11-02T06:00:00Z',
@@ -295,7 +291,7 @@ test('2024-2025-2 week two preview anchors source Monday to today regardless of 
  const model=core.buildHistoricalPreview(state,now);
  a.equal(model.previewTerm,'2024-2025-2');
  a.equal(model.previewSourceWeek,'2025-03-03');
- a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天','后天']);
+ a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天']);
  a.equal(model.days[0].courses.length,0);
  a.equal(model.days[1].courses.length,4);
  a.equal(model.days[1].courses[0].title,'证券投资学');
@@ -305,8 +301,7 @@ test('2024-2025-2 week two preview anchors source Monday to today regardless of 
  a.deepEqual(Array.from(focus.courses,x=>x.title),['证券投资学','毛泽东思想和中国特色社会主义理论体系概论']);
  a.equal(focus.hiddenAfter,2);
  a.equal(model.days[2].courses[0].title,'大学语文');
- a.equal(model.days[3].courses[0].title,'中级财务会计');
- a.equal(model.courses.length,6);
+ a.equal(model.courses.length,5);
  a.equal(new Date(model.at+8*3600000).toISOString().slice(11,16),'09:00');
 });
 test('preview retains real weekday course ordering but does not use the late-night live clock',()=>{
@@ -322,21 +317,26 @@ test('preview retains real weekday course ordering but does not use the late-nig
  a.equal(core.selectTodayPair(m.days[1]).hiddenAfter,1);
 });
 
-test('a single today lesson returns a balanced day layout',()=>{
- const sample=core.selectTodayPair({today:true,courses:[
-   {title:'只上一节',status:'current'}]});
- a.equal(sample.courses.length,1);a.equal(sample.hiddenAfter,0);
+test('single visible today lesson gets large text and three equal day widths',()=>{
+ const sample=core.selectTodayPair({today:true,courses:[{title:'只上一节',status:'current'}]});
+ a.equal(sample.courses.length,1);
+ a.equal(sample.hiddenAfter,0);
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/expanded=todayFocus\.courses\.length>1/);
  a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
- a.match(ui,/slots=4/);
- a.match(ui,/todayWidth=expanded\?colWidth\*2\+extraGap:colWidth/);
+ a.match(ui,/sideWidth=Math\.floor\(usableWidth\/\(expanded\?4:3\)\)/);
+ a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
+ a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
+ a.match(ui,/density=\{emphasize\?'single':'normal'\}/);
+ a.match(ui,/largeText\?\(compact\?13:15\)/);
 });
-test('collapsed layout derives its count from visible focus rather than historical daily total',()=>{
+test('only two visible today cards activate smaller pair typography',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
  a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
- a.match(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)/);
+ a.match(ui,/density="pair"/);
+ a.match(ui,/const titleSize=smallText\?9:/);
+ a.match(ui,/const detailSize=smallText\?8:/);
  const courses=['早课','午课','晚课'].map((title,i)=>({title,status:i===2?'current':'done'}));
  const focus=core.selectTodayPair({courses});
  a.deepEqual(Array.from(focus.courses,x=>x.title),['晚课']);
@@ -418,7 +418,7 @@ test('widget renders expanded today pair without test-only labels',()=>{
  a.match(ui,/selectTodayPair\(day\)/);
  a.match(ui,/focus\.hiddenAfter>0/);
  a.match(ui,/\+\{focus\.hiddenAfter\}节课/);
- a.match(ui,/expanded&&day\.today/);
+ a.match(ui,/day\.today&&expanded/);
  a.doesNotMatch(ui,/>测试<\/Text>/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
@@ -435,7 +435,7 @@ test('card paints color after fixed-width frame so backgrounds center like heade
 });
 test('course card retains comfortable internal padding independent of widget outer inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/\.padding\(compact\?6:8\)/);
+ a.match(ui,/\.padding\(cardPadding\)/);
  a.match(ui,/safeInset=medium\?9:12/);
 });
 test('all widget families retain an opaque white background',()=>{
@@ -444,13 +444,16 @@ test('all widget families retain an opaque white background',()=>{
  a.equal(ui.split(literal).length-1,3);
  a.doesNotMatch(ui,/Widget\.isTransparentMode|Widget\.isBlurMode|Widget\.isTransparentBackground|OPAQUE_CANVAS/);
 });
-test('all day card widths are explicit and centered within four equal slots',()=>{
+test('all three day sections center visible cards; expanded today remains symmetric',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/function CourseCard\(\{course,compact=false,width\}\)/);
+ a.match(ui,/function CourseCard\(\{course,compact=false,width,density='normal'\}\)/);
  a.match(ui,/width=\{width-8\}/);
  a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
  a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
  a.match(ui,/width=\{cardWidth\}/);
+ a.match(ui,/const sideWidth=Math\.floor\(usableWidth\/\(expanded\?4:3\)\)/);
+ a.match(ui,/const todayWidth=usableWidth-sideWidth\*2/);
+ a.match(ui,/width=\{day\.today\?todayWidth:sideWidth\}/);
  a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
  a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
 });
