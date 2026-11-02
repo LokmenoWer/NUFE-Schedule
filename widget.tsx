@@ -50,7 +50,12 @@ function DayColumn({day,width,compact=false,maxRows=1}){
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
     {window.courses.length?window.courses.map(c=>
-      <CourseCard key={c.id} course={c} compact={compact} width={width-4}/>):
+      <HStack key={c.id} alignment="top" spacing={0}
+        frame={{width,alignment:'center'}}>
+        <Spacer minLength={0}/>
+        <CourseCard course={c} compact={compact} width={width-8}/>
+        <Spacer minLength={0}/>
+      </HStack>):
       <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
     {window.hiddenAfter>0?
       <Text font={compact?9:10} foregroundStyle={COLORS.faint}>

@@ -436,7 +436,9 @@ test('widget removes the opaque canvas in all Scripting transparency modes',()=>
 test('all day card widths are explicit and centered within four equal slots',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/function CourseCard\(\{course,compact=false,width\}\)/);
- a.match(ui,/width=\{width-4\}/);
+ a.match(ui,/width=\{width-8\}/);
+ a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
+ a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
  a.match(ui,/width=\{cardWidth\}/);
  a.match(ui,/frame=\{width\?\{width,alignment:'topLeading'\}/);
 });
