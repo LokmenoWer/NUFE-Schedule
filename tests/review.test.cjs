@@ -109,6 +109,40 @@ function loggedIn(e,sourceRaw){
  e.m.HTTP.prototype.json=async function(url){return typeof sourceRaw==='function'?sourceRaw(url):sourceRaw;};
 }
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
+test('notification failure preserves verified sync and allows the next refresh',async()=>{
+ const e=await env();loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('notification denied');};
+ await executeDaily(e);
+ const s=e.store.read();a.equal(s.runStatus,'success');a.equal(s.lastError,null);
+ a.equal(s.failures,0);a.equal(s.nextAttempt,0);a.equal(s.resultNoticeError,'NOTIFICATION_FAILED');
+ a.match(e.sandbox.output,/刷新成功/);a.equal(e.db.length,1);
+ const id=e.db[0].identifier;
+ e.sandbox.__sdk.Notification.schedule=async()=> 'delivered';
+ await e.m.run();a.equal(e.store.read().resultNoticeError,null);a.equal(e.db.length,1);a.equal(e.db[0].identifier,id);
+});
+test('failure notification errors preserve the original network failure',async()=>{
+ const e=await env();e.m.HTTP.prototype.get=async()=>{const error=Error('offline');error.code='NETWORK';throw error;};
+ e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('notification denied');};
+ await executeDaily(e);const s=e.store.read();
+ a.equal(s.lastError,'NETWORK');a.equal(s.failures,1);a.equal(s.resultNoticeError,'NOTIFICATION_FAILED');
+ a.notEqual(s.authNoticeError,'NOTIFICATION_FAILED');a.equal(e.db.length,0);
+});
+test('partial refresh notification failure keeps partial status and semester errors',async()=>{
+ const e=await env();e.state.runStatus='partial';e.state.termErrors=[{sid:'160',code:'ANCHOR'}];
+ e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('notification denied');};
+ await e.m.reportRefreshResult(false,'PARTIAL_SYNC',e.state,e.store);
+ a.equal(e.store.read().runStatus,'partial');a.equal(e.state.termErrors[0].code,'ANCHOR');a.equal(e.state.failures,0);
+});
+test('run status uses readable Chinese and distinguishes notification delivery',async()=>{
+ const e=await env();
+ for(const [status,label] of Object.entries({success:'刷新成功',partial:'部分完成',failed:'刷新失败',cancelled:'已取消'})){
+  e.state.runStatus=status;a.ok(e.m.statusText(e.state).includes('本次运行：'+label));
+ }
+ e.state.resultNoticeError='NOTIFICATION_FAILED';a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
+});
+test('retry deadline explicitly waits for a future automation trigger',async()=>{
+ const {m}=await env();a.match(m.automaticRetryText({nextAttempt:Date.now()+60000}),/等待自动化触发/);
+});
 test('first unattended authentication failure delivers one specific alert and records it',async()=>{
  const e=await env();
  e.m.HTTP.prototype.get=async function(url){if(url.includes('/student/sso/login'))return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"></form>'};const er=new Error('AUTH_REQUIRED');er.code='AUTH_REQUIRED';throw er;};
