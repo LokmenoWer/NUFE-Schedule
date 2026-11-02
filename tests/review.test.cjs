@@ -46,6 +46,41 @@ test('widget mirror publishes only non-sensitive verified course fields',async()
  a.equal(saved.events[0].teacher,'张老师');
  a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
 });
+test('temporary 2025-2 widget preview mirrors only historical courses without changing live calendar data',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-02T08:00:00Z');
+ e.baseline([lesson({id:'real',start:'2026-11-03T02:00:00Z',end:'2026-11-03T03:30:00Z'})]);
+ e.state.semesters['historical']={
+   name:'2025-2026-2',lastSuccess:'2026-06-15T08:00:00Z',
+   events:[
+     lesson({id:'spring1',start:'2026-04-06T02:00:00Z',end:'2026-04-06T03:30:00Z',title:'春季第一节'}),
+     lesson({id:'spring2',start:'2026-04-06T05:30:00Z',end:'2026-04-06T07:00:00Z',title:'春季第二节',teachers:['高老师']}),
+     lesson({id:'spring3',start:'2026-04-07T02:00:00Z',end:'2026-04-07T03:30:00Z',title:'春季周二'})
+   ]
+ };
+ e.state.lastCheck='2026-11-02T07:00:00Z';
+ const originalState=JSON.stringify(e.state),originalEvents=e.db.length;
+ a.equal(e.m.publishWidgetCache(e.state,now),true);
+ const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
+ a.equal(saved.events.length,1); // Live projection is unchanged.
+ a.equal(saved.events[0].title,'高等数学');
+ a.equal(saved.preview.term,'2025-2026-2');
+ a.equal(saved.preview.events.length,3);
+ a.equal(saved.preview.events[1].teacher,'高老师');
+ a.equal(saved.preview.events[1].start,'2026-04-06T05:30:00Z'); // Historical date stays intact.
+ a.deepEqual(Object.keys(saved.preview.events[0]).sort(),['end','id','location','start','teacher','title']);
+ a.equal(JSON.stringify(e.state),originalState);
+ a.equal(e.db.length,originalEvents);
+ a.doesNotMatch(JSON.stringify(saved),/calendarId|password|cookie|installation-owner/);
+});
+test('temporary widget preview does not silently substitute an unrelated semester',async()=>{
+ const e=await env();
+ e.baseline([lesson()]);
+ e.state.lastCheck='2026-11-02T07:00:00Z';
+ a.equal(e.m.publishWidgetCache(e.state,Date.parse('2026-11-02T08:00:00Z')),true);
+ const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
+ a.equal(saved.preview,null);
+});
 test('widget mirror blocks unverified transactions, filters old semesters, and keeps calendar sync independent',async()=>{
  const e=await env();
  const now=Date.parse('2026-11-03T06:10:00.000Z');
