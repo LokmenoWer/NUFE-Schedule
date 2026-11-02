@@ -136,7 +136,7 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(menus[0],['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
+test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
@@ -321,46 +321,21 @@ test('missing official semester dates fails closed without importing or guessing
  a.equal(e.state.anchors['140'],undefined);
 });
 
-test('foreground management exposes locked-state recovery without waiting for acquire',async()=>{
- const e=await env({hostEnv:'index'});
- e.store.write(e.state);
+test('settings menu contains only credentials and the calendar, with no advanced actions',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
  e.keys.set('NUFE.Local.v1.cookies','[]');
- const lockPath=e.store.path('run-lock.json');
- const lockBefore=e.files.get(lockPath);
- const actions=[];
- let presented=0,confirmations=0;
- e.sandbox.Alert=class{
-  constructor(){this.actions=[];}
-  addAction(label){this.actions.push(label);}
-  addCancelAction(){}
-  async presentSheet(){actions.push(this.actions.slice());return [1,2,2][presented++]??-1;}
-  async presentAlert(){return 0;}
+ e.state.calendarId=e.calendar.identifier;
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async options=>{
+   menus.push(options.actions.map(x=>x.label));
+   return menus.length===1?1:null;
  };
- e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;return false;};
  await e.m.run();
- a.ok(actions[1].includes('更多操作'));
- a.ok(actions[2].includes('检查同步锁'));
- a.equal(confirmations,1);
- a.equal(e.files.get(lockPath),lockBefore);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);
+ a.deepEqual(Array.from(menus[1]),['自动登录凭据','课表日历']);
  a.equal(e.requests.length,0);
+ a.equal(e.store.read().failures,0);
 });
-test('verified cancellation leaves the original lock untouched',async()=>{
- const e=await env();
- const path=e.store.path('run-lock.json'),before=e.files.get(path);
- e.sandbox.__sdk.Dialog.confirm=async()=>false;
- await e.m.repairSyncLock(e.store);
- a.equal(e.files.get(path),before);
-});
-test('explicit user approval removes only unchanged lock, never the timetable',async()=>{
- const e=await env();const path=e.store.path('run-lock.json');
- e.store.write(e.state);
- e.sandbox.__sdk.Dialog.confirm=async()=>true;
- e.sandbox.__sdk.Dialog.alert=async()=>{};
- await e.m.repairSyncLock(e.store);
- a.equal(e.files.has(path),false);
- a.ok([...e.files.keys()].some(x=>x.endsWith('.json')));
-});
-
 test('project metadata uses stable NUFE-Schedule branding',()=>{
  const project=JSON.parse(fs.readFileSync(__dirname+'/../script.json','utf8'));
  a.equal(project.name,'NUFE-Schedule');
@@ -679,4 +654,52 @@ test('waiting task acquires lock only after original run releases it',async()=>{
  a.equal(status,'acquired');
  a.doesNotThrow(()=>second.check());
  second.release();
+});
+
+test('no recovery buttons are offered for successful runs or ordinary network failure',async()=>{
+ const e=await env();
+ a.equal(e.m.availableRecovery(null,e.state,e.store),null);
+ a.equal(e.m.availableRecovery('NETWORK',e.state,e.store),null);
+ a.equal(e.m.availableRecovery('LOGIN_SCHEMA',e.state,e.store),null);
+});
+test('a malformed Cookie storage error offers only local session reset',async()=>{
+ const e=await env();
+ const r=e.m.availableRecovery('COOKIE_STORAGE',e.state,e.store);
+ a.equal(r.kind,'cookie');a.equal(r.label,'清除异常 Cookie');
+ e.keys.set('NUFE.Local.v1.cookies','local-bad-cookie');
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials',JSON.stringify({version:1,username:'sample',password:'fake'}));
+ e.state.authPaused=true;e.state.nextAttempt=Date.now()+100000;e.state.lastError='COOKIE_STORAGE';
+ e.store.write(e.state);e.sandbox.__sdk.Dialog.alert=async()=>{};
+ await e.m.applyRecovery('cookie',e.state,e.store);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),true);
+ a.equal(e.state.authPaused,false);
+ a.equal(e.state.nextAttempt,0);
+ a.equal(e.state.lastError,null);
+});
+test('the status screen shows a recovery option only for the active recorded error',async()=>{
+ const e=await env();let prompts=[];
+ e.sandbox.__sdk.Dialog.confirm=async o=>{prompts.push(o);return false;};
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ e.state.lastError='COOKIE_STORAGE';e.state.runStatus='failed';
+ a.equal(await e.m.showRunStatus(e.state,e.store),null);
+ a.equal(prompts.length,1);
+ a.equal(prompts[0].confirmLabel,'清除异常 Cookie');
+ e.state.runStatus='success';await e.m.showRunStatus(e.state,e.store);
+ a.equal(prompts.length,1);
+});
+test('invalid lock recovery cannot clear a live valid lock',async()=>{
+ const e=await env(),path=e.store.path('run-lock.json'),before=e.files.get(path);
+ e.sandbox.__sdk.Dialog.alert=async()=>{};
+ e.sandbox.__sdk.Dialog.confirm=async()=>{throw Error('should not ask to clear active lock');};
+ await e.m.applyRecovery('lock',e.state,e.store);
+ a.equal(e.files.get(path),before);
+});
+test('recovery backup option appears only when the matching backup exists',async()=>{
+ const e=await env();
+ e.state.lastSyncBackupName='known.json';
+ a.equal(e.m.availableRecovery('CALENDAR_VERIFY',e.state,e.store),null);
+ e.files.set(e.store.path('known.json'),'{}');
+ a.equal(e.m.availableRecovery('CALENDAR_VERIFY',e.state,e.store).kind,'backup');
+ a.equal(e.m.availableRecovery('NETWORK',e.state,e.store),null);
 });
