@@ -116,7 +116,16 @@ test('end-to-end failed calendar save never purges legacy data',async()=>{const 
 test('end-to-end school person change blocks all calendar writes',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('NUFE.Local.v1.person','another-person');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');a.equal(e.store.read().authPaused,true);a.match(e.notices[0].title,/失败/);});
 test('end-to-end changed student identity in data blocks replacement',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('NUFE.Local.v1.student','another-student');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');});
 test('end-to-end missing bound calendar never falls back to personal calendar',async()=>{const e=await env();e.state.calendarId='missing-calendar';e.add(lesson(),{cal:e.other,notes:'personal'});loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'CALENDAR_MISSING');a.equal(e.notices.length,1);});
-test('busy background invocation still sends one final failure',async()=>{const e=await env();e.store.write(e.state);await e.m.run();a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.match(e.sandbox.output,/刷新失败/);});
+test('second background invocation does not start while a previous lock is held',async()=>{
+ const e=await env();e.store.write(e.state);
+ const prev=e.m.acquireSyncSlot;
+ // The OS budget is bounded; simulate a single wait tick with a short timeout.
+ const result=await prev(new e.m.Store(),false,{backgroundWait:1,poll:2});
+ a.equal(result,'still-running');
+ a.equal(e.requests.length,0);
+ a.equal(e.db.length,0);
+ a.equal(e.store.read().failures,0);
+});
 test('automatic login without credentials stops before submitting password',async()=>{const e=await env();let count=0;const http={get:async()=>{count++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1"></form>'}}};await a.rejects(()=>e.m.coursePage(http,false),code('AUTH_REQUIRED'));a.equal(count,2);});
 test('automatic login encountering MFA never opens UI or attempts codes',async()=>{const e=await env();const http={get:async()=>({url:'https://authserver.nufe.edu.cn/authserver/login',text:'isMultifactor=true'})};await a.rejects(()=>e.m.coursePage(http,false),code('AUTH_INTERACTIVE_REQUIRED'));});
 test('automatic captcha requirement never encrypts or submits password',async()=>{const e=await env();let posts=0;const http={jar:new e.m.CookieJar(),get:async(url,opt)=>{if(opt&&opt.body)posts++;return {text:''}},authJSON:async()=>({isNeed:true})};const page={url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1s1"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};await a.rejects(()=>e.m.passwordLogin(http,page,'sample','local-password',false),code('AUTH_INTERACTIVE_REQUIRED'));a.equal(posts,0);});
@@ -538,4 +547,60 @@ test('timestamp-only refresh updates multiple course events without changing IDs
  await e.m.polishTermNotes(e.calendar,e.state,e.store,'161',()=>{});
  a.deepEqual(e.db.map(x=>x.identifier),ids);
  a.ok(e.db.every(x=>x.notes==='同步：2026-11-02 09:07'));
+});
+
+test('manual cancellation request only targets the exact previous lock token',async()=>{
+ const e=await env(),waiter=new e.m.Store(),lockFile=e.store.path('run-lock.json');
+ const before=e.files.get(lockFile);
+ a.equal(waiter.requestCancelActive(),true);
+ a.equal(e.files.get(lockFile),before);
+ a.throws(()=>e.store.check(),code('SYNC_SUPERSEDED'));
+ e.store.release();
+ a.equal(e.files.has(lockFile),false);
+ a.equal(e.files.has(e.store.path('run-cancel.json')),false);
+ waiter.acquire();
+ a.doesNotThrow(()=>waiter.check());
+ waiter.release();
+});
+test('interrupted transaction journal is retained until next owner can recover',async()=>{
+ const e=await env(),newcomer=new e.m.Store(),old=lesson();
+ e.state.tx=tx([old],[]);e.store.write(e.state);
+ a.equal(newcomer.requestCancelActive(),true);
+ a.throws(()=>e.store.write(e.state),code('SYNC_SUPERSEDED'));
+ e.store.release();
+ const got=await e.m.acquireSyncSlot(newcomer,false,{backgroundWait:5,poll:1});
+ a.equal(got,'acquired');
+ a.equal(newcomer.read().tx.sid,'161');
+ newcomer.release();
+});
+test('nonmatching and stale cancellation tokens cannot terminate a new owner',async()=>{
+ const e=await env(),lock=e.store.path('run-lock.json'),cancel=e.store.path('run-cancel.json');
+ const token=JSON.parse(e.files.get(lock)).token;
+ e.files.set(cancel,JSON.stringify({token:'other-task',at:Date.now()}));
+ a.doesNotThrow(()=>e.store.check());
+ e.store.release();
+ e.files.set(cancel,JSON.stringify({token,at:Date.now()}));
+ const next=new e.m.Store();next.acquire();
+ a.doesNotThrow(()=>next.check());
+ a.equal(e.files.has(cancel),false);
+ next.release();
+});
+test('foreground conflict offers a wait-or-cancel choice only on contention',async()=>{
+ const e=await env(),seen=[];
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>{seen.push(o);return 1;};
+ const second=new e.m.Store();
+ const result=await e.m.acquireSyncSlot(second,true,{foregroundWait:1,poll:2});
+ a.equal(result,'still-running');
+ a.equal(seen.length,1);
+ a.deepEqual(Array.from(seen[0].actions,x=>x.label),['等待完成','取消前次任务并刷新']);
+ a.throws(()=>e.store.check(),code('SYNC_SUPERSEDED'));
+ e.store.release();
+});
+test('waiting task acquires lock only after original run releases it',async()=>{
+ const e=await env(),second=new e.m.Store();
+ setTimeout(()=>e.store.release(),5);
+ const status=await e.m.acquireSyncSlot(second,false,{backgroundWait:150,poll:10});
+ a.equal(status,'acquired');
+ a.doesNotThrow(()=>second.check());
+ second.release();
 });

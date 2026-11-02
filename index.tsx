@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: update calendar sync timestamps after each verified term refresh, not only v3 migration.
+// Modified 2026-11-02: cooperative sync handoff with foreground wait/cancel choice; only one calendar writer.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -697,9 +697,55 @@ class Store {
   acquire() {const p=this.path('run-lock.json');if(this.fm.fileExists(p)){try{const l=JSON.parse(this.fm.readString(p));if(Date.now()-l.at<20*60000)fail('BUSY');}catch(e){if(e.code==='BUSY')throw e;fail('LOCK_CORRUPT');}}
     if(this.fm.fileExists(p))this.fm.remove(p);
     const token=uuid(),candidate=this.path('lock-'+token+'.tmp');this.fm.writeString(candidate,JSON.stringify({token,at:Date.now()}));
-    try{this.fm.move(candidate,p);}catch(_){if(this.fm.fileExists(candidate))this.fm.remove(candidate);fail('BUSY');}this.token=token;this.check();}
-  check(){if(!this.token)fail('LOCK_LOST');const p=this.path('run-lock.json');let l;try{l=JSON.parse(this.fm.readString(p));}catch(_){fail('LOCK_LOST');}assert(l.token===this.token&&Date.now()-l.at<20*60000,'LOCK_LOST');}
-  release(){if(!this.token)return;try{this.check();this.fm.remove(this.path('run-lock.json'));}catch(_){}this.token=null;}
+    try{this.fm.move(candidate,p);}catch(_){if(this.fm.fileExists(candidate))this.fm.remove(candidate);fail('BUSY');}this.token=token;
+    // Old cancellation requests target exact lock tokens; never apply one to a
+    // subsequent run. Only the active owner can clear its own request on exit.
+    const cancel=this.path('run-cancel.json');
+    if(this.fm.fileExists(cancel)){
+      try{const r=JSON.parse(this.fm.readString(cancel));if(r.token!==token)this.fm.remove(cancel);}catch(_){}
+    }
+    this.check();
+  }
+  // Cancellation is a cooperative handoff, not a forced termination. The old
+  // task must acknowledge it at its next existing safety checkpoint.
+  requestCancelActive(){
+    const p=this.path('run-lock.json'),cancel=this.path('run-cancel.json');
+    if(!this.fm.fileExists(p))return false;
+    let current,raw;
+    try{raw=this.fm.readString(p);current=JSON.parse(raw);}catch(_){fail('LOCK_CORRUPT');}
+    if(!current||typeof current.token!=='string'||!Number.isFinite(current.at))fail('LOCK_CORRUPT');
+    if(Date.now()-current.at>=20*60000)return false;
+    this.fm.writeString(cancel,JSON.stringify({token:current.token,at:Date.now()}));
+    // If the owner changed during the request, never request termination of
+    // the new holder; the token remains scoped to the previous invocation.
+    if(!this.fm.fileExists(p)||this.fm.readString(p)!==raw)return false;
+    return true;
+  }
+  check(){
+    if(!this.token)fail('LOCK_LOST');
+    const p=this.path('run-lock.json');let l;
+    try{l=JSON.parse(this.fm.readString(p));}catch(_){fail('LOCK_LOST');}
+    assert(l.token===this.token&&Date.now()-l.at<20*60000,'LOCK_LOST');
+    const cancel=this.path('run-cancel.json');
+    if(this.fm.fileExists(cancel)){
+      let r=null;try{r=JSON.parse(this.fm.readString(cancel));}catch(_){}
+      if(r&&r.token===this.token)fail('SYNC_SUPERSEDED');
+    }
+  }
+  release(){
+    if(!this.token)return;
+    const p=this.path('run-lock.json'),cancel=this.path('run-cancel.json');
+    try{
+      const owner=JSON.parse(this.fm.readString(p));
+      if(owner.token===this.token){
+        if(this.fm.fileExists(cancel)){
+          try{if(JSON.parse(this.fm.readString(cancel)).token===this.token)this.fm.remove(cancel);}catch(_){}
+        }
+        this.fm.remove(p);
+      }
+    }catch(_){}
+    this.token=null;
+  }
 }
 function validateRecords(events,code='STATE_CORRUPT') {
   assert(Array.isArray(events),code);const ids=new Set();
@@ -1578,6 +1624,28 @@ async function refreshResult(ok,code=null){
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
+// Foreground: offer a choice only when a competing task is detected.
+// Background: bounded waiting, then a clean skip; iOS may terminate a waiting
+// shortcut and must never be asked to wait indefinitely.
+async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgroundWait=45000,poll=750}={}){
+  try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+  if(interactive){
+    const choice=new Alert();choice.title='已有同步任务';
+    choice.message='另一项课表同步正在运行。可等待它完成，或请求它在安全检查点退出后重新同步。取消不会强制终止 iOS 进程。';
+    choice.addAction('等待完成');
+    choice.addDestructiveAction('取消前次任务并刷新');
+    choice.addCancelAction('暂不刷新');
+    const selected=await choice.presentSheet();
+    if(selected<0)return 'dismissed';
+    if(selected===1)store.requestCancelActive();
+  }
+  const deadline=Date.now()+(interactive?foregroundWait:backgroundWait);
+  while(Date.now()<deadline){
+    await new Promise(resolve=>Timer.schedule(poll,false,resolve));
+    try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+  }
+  return 'still-running';
+}
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
@@ -1618,7 +1686,17 @@ async function run() {
         }
       }
     }
-    store.acquire();locked=true;state=store.read();
+    const slot=await acquireSyncSlot(store,interactive);
+    if(slot!=='acquired'){
+      // Never record a second task as a failed synchronization.
+      // The original task remains responsible for the calendar and state.
+      if(interactive&&slot==='still-running')
+        await notice('同步仍在进行','前一任务尚未结束。本次没有启动第二个同步，也没有修改日历。');
+      if(!interactive&&config.runsWithSiri)
+        Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
+      return;
+    }
+    locked=true;state=store.read();
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.
@@ -1655,6 +1733,12 @@ async function run() {
     if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
+    if(code==='SYNC_SUPERSEDED'){
+      // The newer invocation will acquire the lock only after release().
+      // In-progress transactions are already journaled for safe recovery.
+      if(config.runsWithSiri)Script.setShortcutOutput('本次同步已按请求停止，后续任务可以继续。');
+      return;
+    }
     if(state&&locked){
       const at=new Date().toISOString();state.runStatus=code==='CANCELLED'?'cancelled':'failed';state.runCompletedAt=at;
       if(!['BUSY','LOCK_LOST','CANCELLED'].includes(code)){
@@ -1674,7 +1758,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,repairSyncLock,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*
