@@ -94,10 +94,10 @@ function RollingPanel({model,family}){
       // Keep both header edges and all four columns clear of rounded corners.
       const safeInset=medium?9:12,gap=medium?4:6;
       const today=model.days.find(d=>d.today);
-      const expanded=(today?.courses?.length||0)>1;
-      // Five equally-sized course slots when today has multiple classes:
-      // yesterday / today-current / today-next / tomorrow / day-after.
-      // Otherwise keep the original four balanced day columns.
+      const todayFocus=selectTodayPair(today);
+      const expanded=todayFocus.courses.length>1;
+      // Exactly four course slots: yesterday / today-current / today-next / tomorrow,
+      // or yesterday / focused today / tomorrow / day-after when only one remains.
       const slots=4;
       const extraGap=0;
       const colWidth=Math.max(32,Math.floor(
@@ -113,7 +113,8 @@ function RollingPanel({model,family}){
           {model.days.filter(day=>!expanded||day.index!==3).map(day=>expanded&&day.today
             ?<TodayPairColumn key="today-pair" day={day}
               width={todayWidth} compact={medium} gap={gap}/>
-            :<DayColumn key={String(day.index)} day={day}
+            :<DayColumn key={String(day.index)}
+              day={day.today?{...day,courses:todayFocus.courses}:day}
               width={colWidth} compact={medium} maxRows={maxRows}/> )}
         </HStack>
       </VStack>;

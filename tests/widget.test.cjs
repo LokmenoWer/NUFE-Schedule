@@ -310,9 +310,22 @@ test('a single today lesson returns a balanced day layout',()=>{
    {title:'只上一节',status:'current'}]});
  a.equal(sample.courses.length,1);a.equal(sample.hiddenAfter,0);
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/expanded=\(today\?\.courses\?\.length\|\|0\)>1/);
+ a.match(ui,/expanded=todayFocus\.courses\.length>1/);
+ a.match(ui,/day=\{day\.today\?\{\.\.\.day,courses:todayFocus\.courses\}:day\}/);
  a.match(ui,/slots=4/);
  a.match(ui,/todayWidth=expanded\?colWidth\*2\+extraGap:colWidth/);
+});
+test('collapsed layout derives its count from visible focus rather than historical daily total',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
+ a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
+ a.match(ui,/model\.days\.filter\(day=>!expanded\|\|day\.index!==3\)/);
+ const courses=['早课','午课','晚课'].map((title,i)=>({title,status:i===2?'current':'done'}));
+ const focus=core.selectTodayPair({courses});
+ a.deepEqual(Array.from(focus.courses,x=>x.title),['晚课']);
+ a.equal(focus.courses.length>1,false);
+ courses[2].status='done';
+ a.deepEqual(Array.from(core.selectTodayPair({courses}).courses,x=>x.title),['晚课']);
 });
 test('when current class is last, today shows only that current class',()=>{
  const c=['上完','正在上'].map((title,i)=>({title,status:i?'current':'done'}));
