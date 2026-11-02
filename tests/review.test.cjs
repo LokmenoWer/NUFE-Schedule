@@ -980,6 +980,65 @@ test('interrupted transaction journal is retained until next owner can recover',
  a.equal(newcomer.read().tx.sid,'161');
  newcomer.release();
 });
+test('responsive sync heartbeat prevents cancel takeover even when lock was started long ago',async()=>{
+ const e=await env(),lock=e.store.path('run-lock.json'),hb=e.store.path('run-heartbeat.json');
+ const p=JSON.parse(e.files.get(lock));
+ e.files.set(lock,JSON.stringify({...p,at:Date.now()-180000}));
+ e.files.set(hb,JSON.stringify({token:p.token,at:Date.now()}));
+ const waiter=new e.m.Store();
+ a.equal(waiter.requestCancelActive(),true);
+ a.equal(waiter.recoverStalledCancellation(1000),false);
+ a.equal(JSON.parse(e.files.get(lock)).token,p.token);
+ a.throws(()=>waiter.acquire(),code('BUSY'));
+ e.store.release();
+});
+test('cancelled orphan lock may be safely reassigned after inactivity, with transaction preserved',async()=>{
+ const e=await env(),lock=e.store.path('run-lock.json'),hb=e.store.path('run-heartbeat.json');
+ e.state.tx=tx([lesson()],[]);e.store.write(e.state);
+ const prior=JSON.parse(e.files.get(lock));
+ e.files.set(lock,JSON.stringify({...prior,at:Date.now()-180000}));
+ e.files.set(hb,JSON.stringify({token:prior.token,at:Date.now()-180000}));
+ e.state.lastStageAt=new Date(Date.now()-180000).toISOString();
+ e.store.write(e.state);
+ // The write above refreshes activity, so simulate actual process suspension.
+ e.files.set(hb,JSON.stringify({token:prior.token,at:Date.now()-180000}));
+ const saved=e.store.read();saved.lastStageAt=new Date(Date.now()-180000).toISOString();
+ const stateName=[...e.files.keys()].filter(x=>/state-\d{10}\.json$/.test(x)).sort().at(-1);
+ e.files.set(stateName,JSON.stringify(saved));
+ const waiter=new e.m.Store();
+ a.equal(waiter.requestCancelActive(),true);
+ a.equal(waiter.recoverStalledCancellation(120000),true);
+ a.equal(e.files.has(lock),false);
+ a.throws(()=>e.store.check(),code('LOCK_LOST'));
+ waiter.acquire();
+ a.equal(waiter.read().tx.sid,'161');
+ a.doesNotThrow(()=>waiter.check());
+ e.store.release(); // Old owner may not delete the new owner's lock.
+ a.equal(e.files.has(lock),true);
+ a.doesNotThrow(()=>waiter.check());
+ waiter.release();
+});
+test('cancel request for another token cannot reclaim or delete a valid task',async()=>{
+ const e=await env(),other=new e.m.Store(),cancel=e.store.path('run-cancel.json'),lock=e.store.path('run-lock.json');
+ const owner=JSON.parse(e.files.get(lock));
+ e.files.set(cancel,JSON.stringify({token:'unrelated-owner',at:Date.now()}));
+ a.equal(other.recoverStalledCancellation(1),false);
+ a.equal(JSON.parse(e.files.get(lock)).token,owner.token);
+ e.store.release();
+});
+test('cancelling a suspended task resumes through ordinary lock acquisition',async()=>{
+ const e=await env(),old=e.store.path('run-lock.json'),hb=e.store.path('run-heartbeat.json');
+ const lock=JSON.parse(e.files.get(old));
+ e.files.set(old,JSON.stringify({...lock,at:Date.now()-180000}));
+ e.files.set(hb,JSON.stringify({token:lock.token,at:Date.now()-180000}));
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>1;
+ const waiter=new e.m.Store();
+ const result=await e.m.acquireSyncSlot(waiter,true,{foregroundWait:100,poll:1});
+ a.equal(result,'acquired');
+ a.notEqual(JSON.parse(e.files.get(old)).token,lock.token);
+ a.doesNotThrow(()=>waiter.check());
+ waiter.release();
+});
 test('nonmatching and stale cancellation tokens cannot terminate a new owner',async()=>{
  const e=await env(),lock=e.store.path('run-lock.json'),cancel=e.store.path('run-cancel.json');
  const token=JSON.parse(e.files.get(lock)).token;

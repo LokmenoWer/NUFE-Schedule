@@ -688,7 +688,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
 // Immutable generation files: a new file is written and read back before old versions
 // are pruned. Corrupt latest generation fails closed; it never becomes an empty state.
 class Store {
-  constructor() {this.fm=FileManager.local();this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'NUFE-Local-Scripting-v2');if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);this.token=null;this.generation=0;}
+  constructor() {this.fm=FileManager.local();this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'NUFE-Local-Scripting-v2');if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);this.token=null;this.generation=0;this.lastHeartbeat=0;}
   path(n){return this.fm.joinPath(this.dir,n);}
   read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},minutes:10,failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
   write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);this.fm.writeString(this.path(name),text);assert(this.fm.readString(this.path(name))===text,'STATE_WRITE');const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
@@ -703,6 +703,57 @@ class Store {
       try{const r=JSON.parse(this.fm.readString(cancel));if(r.token!==token)this.fm.remove(cancel);}catch(_){}
     }
     this.check();
+  }
+  // A lightweight, token-scoped activity mark. It does not extend the lock's
+  // original 20-minute maximum lifetime, but distinguishes a responsive owner
+  // from a suspended/killed task while the user requests cancellation.
+  heartbeat(){
+    const now=Date.now();
+    if(!this.token||now-this.lastHeartbeat<10000)return;
+    try{
+      this.fm.writeString(this.path('run-heartbeat.json'),
+        JSON.stringify({token:this.token,at:now}));
+      this.lastHeartbeat=now;
+    }catch(_){} // Diagnostics must never interrupt verified calendar writes.
+  }
+  // Only a user-requested cancellation of the SAME token may take over a
+  // demonstrably unresponsive task. Never blindly delete a healthy live lock.
+  recoverStalledCancellation(minIdleMs=90000){
+    const p=this.path('run-lock.json'),cancel=this.path('run-cancel.json');
+    if(!this.fm.fileExists(p)||!this.fm.fileExists(cancel))return false;
+    let raw,l,c;
+    try{raw=this.fm.readString(p);l=JSON.parse(raw);c=JSON.parse(this.fm.readString(cancel));}
+    catch(_){return false;}
+    if(!l||typeof l.token!=='string'||!Number.isFinite(l.at)||
+      !c||c.token!==l.token||!Number.isFinite(c.at))return false;
+    // A fresh cancellation must be requested by the foreground user.
+    if(Date.now()-c.at>5*60000||c.at<l.at)return false;
+    const heartbeatFile=this.path('run-heartbeat.json');
+    let hbRaw=null,hb=null;
+    try{if(this.fm.fileExists(heartbeatFile)){
+      hbRaw=this.fm.readString(heartbeatFile);hb=JSON.parse(hbRaw);
+    }}catch(_){return false;}
+    let lastActivity=l.at;
+    if(hb&&hb.token===l.token&&Number.isFinite(hb.at))
+      lastActivity=Math.max(lastActivity,hb.at);
+    // Fast path: an actively pulsing writer is not an orphan. Avoid parsing
+    // multi-year local state on every polling iteration.
+    if(Date.now()-lastActivity<Math.max(60000,minIdleMs))return false;
+    // Legacy installations do not yet write a heartbeat. The last recorded
+    // sync stage is another reliable sign that the previous run is moving.
+    try{const state=this.read();const stageAt=Date.parse(state.lastStageAt||'');
+      if(Number.isFinite(stageAt)&&stageAt>=l.at)lastActivity=Math.max(lastActivity,stageAt);
+    }catch(_){return false;} // Never take over if state is unreadable.
+    if(Date.now()-lastActivity<Math.max(60000,minIdleMs))return false;
+    // Another owner could have refreshed the mark while we inspected state.
+    try{
+      if(!this.fm.fileExists(p)||this.fm.readString(p)!==raw)return false;
+      if(hbRaw!==null&&this.fm.readString(heartbeatFile)!==hbRaw)return false;
+      const staged=this.path('orphan-lock-'+l.token+'.tmp');
+      this.fm.move(p,staged); // Atomic rename, never delete a different token.
+      try{this.fm.remove(staged);}catch(_){}
+      return true;
+    }catch(_){return false;}
   }
   // Cancellation is a cooperative handoff, not a forced termination. The old
   // task must acknowledge it at its next existing safety checkpoint.
@@ -729,6 +780,7 @@ class Store {
       let r=null;try{r=JSON.parse(this.fm.readString(cancel));}catch(_){}
       if(r&&r.token===this.token)fail('SYNC_SUPERSEDED');
     }
+    this.heartbeat();
   }
   release(){
     if(!this.token)return;
@@ -739,10 +791,15 @@ class Store {
         if(this.fm.fileExists(cancel)){
           try{if(JSON.parse(this.fm.readString(cancel)).token===this.token)this.fm.remove(cancel);}catch(_){}
         }
+        const heartbeatFile=this.path('run-heartbeat.json');
+        if(this.fm.fileExists(heartbeatFile)){
+          try{if(JSON.parse(this.fm.readString(heartbeatFile)).token===this.token)
+            this.fm.remove(heartbeatFile);}catch(_){}
+        }
         this.fm.remove(p);
       }
     }catch(_){}
-    this.token=null;
+    this.token=null;this.lastHeartbeat=0;
   }
 }
 function validateRecords(events,code='STATE_CORRUPT') {
@@ -2084,17 +2141,33 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='另一项课表同步正在运行。可等待它完成，或请求它在安全检查点退出后重新同步。取消不会强制终止 iOS 进程。';
+    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终止正在写入的日历操作。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
     const selected=await choice.presentSheet();
     if(selected<0)return 'dismissed';
-    if(selected===1)store.requestCancelActive();
+    if(selected===1){
+      const requested=store.requestCancelActive();
+      if(!requested){
+        try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+      }
+    }
   }
   const deadline=Date.now()+(interactive?foregroundWait:backgroundWait);
   while(Date.now()<deadline){
+    if(interactive){
+      // A stopped iOS run cannot acknowledge the cancel request. Only after
+      // sufficient inactivity, and only for a matching explicit user request,
+      // transfer ownership; the old token is invalidated before new work.
+      if(store.recoverStalledCancellation()){
+        try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+      }
+    }
     await new Promise(resolve=>Timer.schedule(poll,false,resolve));
+    try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+  }
+  if(interactive&&store.recoverStalledCancellation()){
     try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   }
   return 'still-running';
@@ -2130,7 +2203,7 @@ async function run() {
       // Never record a second task as a failed synchronization.
       // The original task remains responsible for the calendar and state.
       if(interactive&&slot==='still-running')
-        await notice('同步仍在进行','前一任务尚未结束。本次没有启动第二个同步，也没有修改日历。');
+        await notice('前次任务未退出','已经请求取消，但前次任务仍持有有效锁，尚不能安全接管。请稍后重试；不会强制删除日历或并发同步。');
       if(!interactive&&config.runsWithSiri)
         Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
       return;
