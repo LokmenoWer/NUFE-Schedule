@@ -1153,31 +1153,7 @@ function widgetCacheProjection(state,now=Date.now()){
       if(courses.length>400)return null; // Never silently truncate classes.
     }
   }
-  // TEMP widget-only preview of the historical 2025-2026 second semester.
-  // Keep its ORIGINAL dates in Storage. widget-data.ts remaps one representative
-  // teaching week for display; calendar synchronization never uses this data.
-  const historical=Object.values(state.semesters).find(term=>
-    term&&term.name==='2025-2026-2'&&term.lastSuccess&&Array.isArray(term.events));
-  let preview=null;
-  if(historical&&historical.events.length<=400){
-    const events=[];
-    for(const e of historical.events){
-      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
-      const start=Date.parse(e.start),end=Date.parse(e.end);
-      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>DAY)continue;
-      events.push({
-        id:String(e.id||'').slice(0,100),
-        title:e.title.slice(0,90),
-        location:String(e.location||'').slice(0,65),
-        teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
-          .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
-          .join('、').slice(0,75),
-        start:e.start,end:e.end
-      });
-    }
-    if(events.length)preview={term:'2025-2026-2',events};
-  }
-  return {version:1,lastCheck:state.lastCheck,events:courses,preview};
+  return {version:1,lastCheck:state.lastCheck,events:courses};
 }
 function publishWidgetCache(state,now=Date.now()){
   const storage=HostStorage;

@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,selectVisibleCourses,buildHistoricalPreview,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,selectVisibleCourses,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -278,82 +278,41 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
-test('preview uses actual courses from a rich 2025-2026-2 teaching week, aligned to current weekdays',()=>{
- const src=[
-   ev('older','其他教学周周一','2026-03-09T02:00:00Z','2026-03-09T03:30:00Z'),
-   ev('m1','春季周一第一节','2026-04-06T02:00:00Z','2026-04-06T03:30:00Z'),
-   ev('m2','春季周一第二节','2026-04-06T05:30:00Z','2026-04-06T07:00:00Z'),
-   ev('t1','春季周二课程','2026-04-07T02:00:00Z','2026-04-07T03:30:00Z'),
-   ev('w1','春季周三课程','2026-04-08T03:00:00Z','2026-04-08T04:30:00Z')
- ];
- src[2].teacher='赵老师';
- const state={lastCheck:'2026-11-02T06:00:00Z',
-   preview:{term:'2025-2026-2',events:src},semesters:{live:{events:[]}}};
- const now=date('2026-11-02T06:10:00Z'); // Monday 14:10 Beijing
- const m=core.buildWidgetModel(state,now);
- a.equal(m.previewTerm,'2025-2026-2');
- a.equal(m.previewSourceWeek,'2026-04-06');
- a.deepEqual(Array.from(m.days,d=>d.label),['昨天','今天','明天','后天']);
- a.equal(m.days[1].courses.length,2);
- a.equal(m.days[1].courses[0].title,'春季周一第一节');
- a.equal(m.days[1].courses[0].status,'done');
- a.equal(m.days[1].courses[1].title,'春季周一第二节');
- a.equal(m.days[1].courses[1].status,'current');
- a.equal(m.days[1].courses[1].teacher,'赵老师');
- a.equal(m.days[2].courses[0].title,'春季周二课程');
- a.equal(m.days[3].courses[0].title,'春季周三课程');
- a.equal(m.courses.some(c=>c.title==='其他教学周周一'),false);
- const focus=core.selectVisibleCourses(m.days[1],1);
- a.equal(focus.courses[0].title,'春季周一第一节');
- a.equal(focus.hiddenAfter,1);
- a.equal(m.nextAt,date('2026-11-02T07:00:00Z'));
+test('live timetable displays actual current lessons, not the former historical preview',()=>{
+ const now=date('2026-11-02T11:30:00Z'); // Mon 19:30 Beijing
+ const current=ev('live','中国税制','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z');
+ const historical=ev('old','过往课程','2026-04-06T02:00:00Z','2026-04-06T03:30:00Z');
+ const state=make([current,historical]);
+ state.preview={term:'2025-2026-2',events:[historical]};
+ const model=core.buildWidgetModel(state,now);
+ a.equal(model.days[1].courses.length,1);
+ a.equal(model.days[1].courses[0].title,'中国税制');
+ a.equal(model.days[1].courses[0].status,'current');
+ a.equal(model.courses.some(x=>x.title==='过往课程'),false);
+ a.equal(model.previewTerm,undefined);
 });
-
-test('historical preview maps Sunday from previous week without combining unrelated weeks',()=>{
- const state={lastCheck:'2026-11-02T06:00:00Z',
-   preview:{term:'2025-2026-2',events:[
-     ev('sun','上一周周日','2026-04-05T02:00:00Z','2026-04-05T03:30:00Z'),
-     ev('mon','周一上午','2026-04-06T02:00:00Z','2026-04-06T03:30:00Z'),
-     ev('mon2','周一下午','2026-04-06T05:30:00Z','2026-04-06T07:00:00Z')
-   ]},semesters:{live:{events:[]}}};
- const m=core.buildHistoricalPreview(state,date('2026-11-02T02:45:00Z'));
- a.equal(m.days[0].courses[0].title,'上一周周日');
- a.equal(m.days[1].courses.length,2);
- a.equal(m.days[1].courses[0].status,'current');
+test('old private cached preview is ignored, never shifted into the current timetable',()=>{
+ const obj={version:1,lastCheck:'2026-11-02T07:00:00Z',
+   events:[ev('real','真实课表','2026-11-02T10:30:00Z','2026-11-02T12:50:00Z')],
+   preview:{term:'2025-2026-2',events:[ev('past','历史学期','2026-04-06T02:00:00Z','2026-04-06T03:30:00Z')]}
+ };
+ const state=core.readWidgetMirror({get:()=>obj});
+ a.equal(state.kind,'ready');
+ a.equal(state.state.preview,undefined);
+ const model=core.buildWidgetModel(state.state,date('2026-11-02T11:30:00Z'));
+ a.equal(model.days[1].courses.length,1);
+ a.equal(model.days[1].courses[0].title,'真实课表');
 });
-
-test('preview stays isolated: missing 2025 second-term snapshot never shows current courses as historical',()=>{
- const now=date('2026-11-02T06:10:00Z');
- const state=make([ev('live','当期课程','2026-11-02T06:00:00Z','2026-11-02T07:00:00Z')]);
- a.equal(core.buildWidgetModel(state,now),null);
- state.preview={term:'2024-2025-2',events:[ev('wrong','其他学期','2025-03-03T02:00:00Z','2025-03-03T03:30:00Z')]};
- a.equal(core.buildWidgetModel(state,now),null);
- state.preview={term:'2025-2026-2',events:[]};
- a.equal(core.buildWidgetModel(state,now),null);
-});
-
-test('private mirror accepts only validated 2025-2026-2 preview; live course cache remains separate',()=>{
- const old={version:1,lastCheck:'2026-11-02T06:00:00Z',
-   events:[ev('real','真实课程','2026-11-02T02:00:00Z','2026-11-02T03:00:00Z')]};
- const item=ev('past','春季课程','2026-04-06T02:00:00Z','2026-04-06T03:30:00Z');
- const read=core.readWidgetMirror({get:()=>({...old,
-   preview:{term:'2025-2026-2',events:[item]}})});
- a.equal(read.kind,'ready');
- a.equal(read.state.semesters.widget.events[0].title,'真实课程');
- a.equal(read.state.preview.events[0].title,'春季课程');
- const corrupt=core.readWidgetMirror({get:()=>({...old,
-   preview:{term:'2025-2026-2',events:[{password:'secret'}]}})});
- a.equal(corrupt.kind,'invalid');
- a.equal(corrupt.code,'STORAGE_SCHEMA');
-});
-
-test('widget clearly labels the historical preview, with a safe missing-term message',()=>{
+test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/buildWidgetModel\(snapshot\.state/);
- a.match(ui,/model\.previewTerm\?'测试 · 2025-2'/);
- a.match(ui,/未找到测试学期课程/);
- a.match(ui,/PREVIEW_TERM_MISSING/);
- a.doesNotMatch(ui,/buildRollingDays\(snapshot\.state/);
+ a.match(ui,/safeInset=medium\?18:22/);
+ a.match(ui,/padding=\{safeInset\}/);
+ a.match(ui,/width-2\*safeInset/);
+ a.match(ui,/doneBg:'#E5E7EB'/);
+ a.match(ui,/nextBg:'#EFF4FA'/);
+ a.match(ui,/activeBg:'#D9E9FF'/);
+ a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING|model\.previewTerm/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});

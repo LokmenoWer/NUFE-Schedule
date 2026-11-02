@@ -8,8 +8,8 @@ const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
   dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
   faint:'#727E91', finished:'#929AA7',
-  doneBg:'#F2F3F5', nextBg:'#FFFFFF',
-  activeBg:'#E1EDFF'
+  doneBg:'#E5E7EB', nextBg:'#EFF4FA',
+  activeBg:'#D9E9FF'
 };
 
 function CourseCard({course,compact=false}){
@@ -64,21 +64,22 @@ function RollingPanel({model,family}){
   return <GeometryReader>
     {proxy=>{
       const width=proxy.size.width,height=proxy.size.height;
-      const pad=medium?8:10,gap=medium?5:7;
-      const colWidth=Math.max(40,Math.floor((width-2*pad-24-gap*3)/4));
+      // Keep both header edges and all four columns clear of rounded corners.
+      const safeInset=medium?18:22,gap=medium?5:7;
+      const colWidth=Math.max(40,Math.floor((width-2*safeInset-24-gap*3)/4));
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
-      return <VStack alignment="leading" spacing={medium?6:9}
-        padding={pad}
+      return <VStack alignment="leading" spacing={medium?7:10}
+        padding={safeInset}
         widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="center" spacing={5}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
           <Text font={medium?13:15} fontWeight="bold" foregroundStyle={COLORS.dark}>
-            {model.previewTerm?'测试 · 2025-2':'近日课表'}
+            近日课表
           </Text>
           <Spacer/>
           <Text font={10} foregroundStyle={COLORS.faint}>
-            {model.previewTerm?'历史课表预览':'自动更新'}
+            自动更新
           </Text>
         </HStack>
         <HStack alignment="top" spacing={gap}
@@ -97,11 +98,11 @@ function SmallPanel({model}){
   const current=classes.find(x=>x.status==='current');
   const next=classes.find(x=>x.status==='upcoming');
   const chosen=current||next||classes[classes.length-1];
-  return <VStack alignment="leading" spacing={8} padding={13}
+  return <VStack alignment="leading" spacing={8} padding={20}
     widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
     <Text font={14} fontWeight="bold" foregroundStyle={COLORS.dark}>
-      {model.previewTerm?'测试 · 今日课程':'今日课程'}
+      今日课程
     </Text>
     <Text font={11} foregroundStyle={COLORS.faint}>{today?'周'+('一二三四五六日'[today.index]):'周末'} · {classes.length} 节课</Text>
     <Spacer minLength={0}/>
@@ -125,14 +126,11 @@ function SmallPanel({model}){
 
 function EmptyPanel({kind='empty',code=''}) {
   const failure=kind==='invalid';
-  const missingPreview=kind==='preview_missing';
-  const label=missingPreview?'未找到测试学期课程':failure?'缓存读取失败':'尚无课表缓存';
-  const guidance=missingPreview?
-    '请先打开 NUFE-Schedule 一次；若仍无课程，确认 2025-2026-2 已同步':
-    code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
+  const label=failure?'缓存读取失败':'尚无课表缓存';
+  const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
-  return <VStack alignment="leading" spacing={9} padding={16}
+  return <VStack alignment="leading" spacing={9} padding={22}
     widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 近日课表</Text>
@@ -148,16 +146,11 @@ if(snapshot.kind!=='ready'){
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
 }else{
   const model=buildWidgetModel(snapshot.state,Date.now());
-  if(!model){
-    Widget.present(<EmptyPanel kind="preview_missing" code="PREVIEW_TERM_MISSING"/>,
-      {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
-  }else{
-    const family=Widget.family;
-    Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
-      ?<SmallPanel model={model}/>
-      :<RollingPanel model={model} family={family}/>,
-      {policy:'after',date:widgetReloadDate(model)});
-  }
+  const family=Widget.family;
+  Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
+    ?<SmallPanel model={model}/>
+    :<RollingPanel model={model} family={family}/>,
+    {policy:'after',date:widgetReloadDate(model)});
 }
 
 // Required by the Scripting widget lifecycle after presenting the view.
