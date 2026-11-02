@@ -226,7 +226,6 @@ function credentialStorageStatus(){
   if(local)return '仅检测到本机旧凭据，尚未迁移至 iCloud';
   return '未保存账号密码';
 }
-function maskedAccount(username){const s=String(username||'');if(s.length<5)return '已设置（隐藏）';return s.slice(0,2)+'***'+s.slice(-2);}
 
 const DAY = 86400000;
 function fail(code) { const e = new Error(code); e.code = code; throw e; }
@@ -1239,7 +1238,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -1266,11 +1265,12 @@ const ERROR_GUIDE={
   LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
   LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
-  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','从主菜单打开「自动登录凭据」保存登录信息，或执行「立即刷新」手动登录。'],
+  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','点击「立即刷新」通过原生界面重新登录，学校确认认证成功后才会自动保存账号密码。'],
   AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
-  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再从主菜单的「自动登录凭据」更新密码；不要频繁尝试。'],
-  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','从主菜单的「自动登录凭据」删除并重新保存。'],
-  CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台运行；检查保存的自动登录凭据。'],
+  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再从主菜单点击「立即刷新」并手动重新登录；不要频繁尝试。'],
+  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「立即刷新」使用原生界面重新登录。'],
+  CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台重试；部分凭据操作可能不可用。'],
+  LOGOUT_INCOMPLETE:['退出时未能完全清除本机 Cookie 或同步的脚本凭据；已阻止后台继续登录。','解锁 iPhone 并检查 iCloud 钥匙串，再打开 NUFE-Schedule 重试「退出登录」。课表数据不会删除。'],
   WEBVIEW_TIMEOUT:['Scripting 的本机输入界面超时。脚本将优先改用系统安全输入框；不能认定账号密码有误。','如果系统安全输入仍无法完成，请重新打开 Scripting 后再试。'],
   NETWORK_TIMEOUT:['一个学校网络请求等待超过 25 秒，没有得到完整响应。','检查 Wi-Fi、蜂窝网络或 VPN，稍后单次重试。'],
   NETWORK_CHAIN_TIMEOUT:['登录/数据请求涉及多次跳转，整组请求超过 75 秒。','检查当前网络是否能打开学校登录入口，并保留阶段日志。'],
@@ -1558,13 +1558,15 @@ function automaticRetryText(state,now=Date.now()){
 // real-time guarantee that the school schedule or calendar has not changed.
 function statusText(state){
   const status=state.tx?'需要恢复上次写入':
+    state.lastError==='LOGOUT_INCOMPLETE'?'退出未完成':
+    state.signedOut?'已退出登录':
     state.authPaused?'需要处理登录':
     state.runStatus==='failed'?'上次刷新失败':
     state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未完成':
     state.runStatus==='running'?'上次同步可能仍在运行':
     state.runStatus==='success'?'上次刷新成功':
     state.runStatus==='cancelled'?'上次操作已取消':'尚未完成首次同步';
-  const hasIssue=!!state.tx||!!state.authPaused||['failed','partial'].includes(state.runStatus)||(state.termErrors||[]).length>0;
+  const hasIssue=!!state.tx||state.lastError==='LOGOUT_INCOMPLETE'||(!state.signedOut&&(!!state.authPaused||['failed','partial'].includes(state.runStatus)||(state.termErrors||[]).length>0));
   const calendar=state.calendarId?(state.calendarTitle||'已绑定（名称未记录）'):'未绑定';
   const last=state.lastCheck?briefTime(state.lastCheck):'尚无成功核验记录';
   const recent=state.runStatus==='failed'&&state.lastError?
@@ -1574,11 +1576,11 @@ function statusText(state){
   return '结果：'+status+
     '\n上次完成检查：'+last+'（北京时间）'+
     '\n课表日历：'+calendar+
-    (state.authPaused?'\n登录：需要手动处理':'')+
+    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
     (state.tx?'\n事务：等待安全恢复':'')+
     (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
     recent+noticeWarning+
-    (hasIssue?'\n建议：打开「环境自检」定位问题':'\n需要处理：暂未记录异常');
+    (hasIssue?'\n建议：打开「环境自检」定位问题':'');
 }
 // A single authenticated GET checks the actual current school session without
 // asking for course-table JSON, changing cookies, or submitting credentials.
@@ -1664,13 +1666,17 @@ async function inspectEnvironment(state,store){
   }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
 
   let jar=null;
-  try{
+  if(state.signedOut){
+    jar=new CookieJar();
+    put('Cookie 存储','正常','已退出登录；自检不读取或发送先前的学校会话 Cookie');
+  }else try{
     jar=readCookieJar();
     put('Cookie 存储','正常','本次读取及格式检查通过');
   }catch(_){put('Cookie 存储','注意','本机 Cookie 异常，未清理；无法携带原会话验证');}
   const session=await probeSchoolSession(jar);
   put('学校连接',session.connection.level,session.connection.detail);
-  if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
+  if(state.signedOut)put('登录会话',state.lastError==='LOGOUT_INCOMPLETE'?'注意':'正常',state.lastError==='LOGOUT_INCOMPLETE'?'退出凭据清除未完成，但本次没有发送原会话 Cookie':'已退出，本次没有发送原会话 Cookie');
+  else if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
   else if(state.authPaused&&session.auth.level==='正常')
     put('登录会话','注意','当前会话验证通过，但此前登录暂停记录尚未解除；请手动刷新确认');
   else put('登录会话',session.auth.level,session.auth.detail);
@@ -1962,10 +1968,13 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   if(state.notice){state.notice=null;store.write(state);}
-  const jar=readCookieJar();
+  // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
+  const jar=state.signedOut?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
   const http=new HTTP(jar,c=>Keychain.set(KEY,JSON.stringify(c)),budget,stage);
   const info=pageInfo(await coursePage(http,interactive,stage));
+  // Only a verified school session ends the signed-out state.
+  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   const accountKey='NUFE.Local.v1.person';
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
@@ -2026,34 +2035,30 @@ async function loginPreflight(state,store,progress){
   if(!f.execution)fail('LOGIN_EXECUTION_MISSING');
   return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
 }
-// Credentials are opt-in and iCloud-synchronizable; cookies and device IDs stay device-only.
-// install only trusted scripts, and do not export keys/values to diagnostics.
-async function manageSavedCredentials(state,store){
-  let current=null,damaged=false;try{current=readSavedCredentials();}catch(e){if(['CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(e.code)){damaged=true;}else throw e;}
-  const present=hasSavedCredentials();
-  const menu=new Alert();menu.title='iCloud 自动登录凭据';
-  menu.message=damaged?'保存的登录凭据格式异常或暂不可读取，请检查后重新保存。':
-    current?'已保存账号 '+maskedAccount(current.username)+'（密码不显示）。'+
-      (state.credentialCloudStatus==='conflict'?'本机与 iCloud 凭据不一致；当前优先使用本机账号，请手动更换或确认。':
-       state.credentialCloudStatus==='unavailable'?'iCloud 迁移尚未完成，暂时保留本机凭据。':'Cookie 失效时可自动重新登录。'):
-    '尚未保存账号密码。保存到 iCloud 钥匙串后，可在其他已同步设备上使用。';
-  menu.message+='\n\n存储状态：'+credentialStorageStatus();
-  menu.addAction(present?'更换账号或密码':'保存账号与密码');
-  if(present)menu.addDestructiveAction('删除保存的账号与密码');
-  menu.addCancelAction('关闭');
-  const choice=await menu.presentSheet();if(choice<0)return;
-  if(choice===0){
-    const account=await credentialForm({title:'保存登录凭据'});
-    saveCredentials(account.username,account.password);
-    state.credentialCloudStatus='synced';
-    // After user explicitly updates credentials, allow the next timed check.
-    state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
-    await notice('已保存自动登录凭据','凭据已保存到 iCloud 可同步钥匙串。Cookie 仍仅保存在本机。');
-  }else if(present&&choice===1){
-    if(!await confirm('确认删除同步凭据','将从 iCloud 钥匙串删除登录凭据，其他已同步设备也会失去该副本。现有课表与各设备本机 Cookie 不受影响。'))return;
-    removeSavedCredentials();state.credentialCloudStatus=null;store.write(state);
-    await notice('已关闭自动登录','登录凭据已从 iCloud 钥匙串及本机旧存储中删除。');
+// Credentials are automatically stored only after the school verifies login.
+// Logging out deletes local session cookies and Scripting's saved credentials,
+// without touching the iOS Passwords website entry or Apple Calendar.
+async function signOut(state,store){
+  // Saved credentials and the local authenticated session are separate.
+  if(!await confirm('退出登录',
+    '将清除本机学校登录 Cookie 和 NUFE-Schedule 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
+
+  // Persist a fail-closed marker before touching the Keychain, so scheduled
+  // refreshes cannot silently sign back in even if deletion partially fails.
+  state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
+  state.nextAttempt=0;state.failures=0;state.lastError=null;
+  state.runStatus='signed_out';state.credentialCloudStatus=null;
+  store.write(state);
+  try{
+    if(Keychain.contains(KEY))Keychain.remove(KEY);
+    removeSavedCredentials();
+    if(Keychain.contains(KEY)||hasSavedCredentials())fail('CREDENTIALS_UNAVAILABLE');
+  }catch(_){
+    // Stay signed out and offer retry rather than declaring a false success.
+    fail('LOGOUT_INCOMPLETE');
   }
+  try{await notice('已退出登录','已清除本机会话和 NUFE-Schedule 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
+  return true;
 }
 async function refreshResult(ok,code=null){
   const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'NUFE 课表 · 部分完成':'NUFE 课表 · 刷新'+(ok?'成功':'失败');
@@ -2118,11 +2123,19 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   }
   return 'still-running';
 }
+function canOfferSignOut(state){
+  if(state.lastError==='LOGOUT_INCOMPLETE')return true;
+  // No separate logout entry until a session or script credentials exist.
+  // After interrupted cleanup (or iCloud sync reappearance), keep retryable.
+  try{return Keychain.contains(KEY)||hasSavedCredentials();}
+  catch(_){return !state.signedOut;}
+}
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();
   let firstSetup=false;
-  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
+  // A configured calendar stays configured even after explicitly logging out.
+  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
@@ -2133,16 +2146,18 @@ async function run() {
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
       const menu=new Alert();menu.title='NUFE 课表';
-      menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
-      ['立即刷新','自动登录凭据','运行状态'].forEach(x=>menu.addAction(x));menu.addCancelAction('关闭');
+      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
+      menu.addAction('立即刷新');menu.addAction('运行状态');
+      if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
+      menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
-      if(selected===2){
+      if(selected===1){
         const recovery=await showRunStatus(state,store);
         if(!recovery)return;
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===1)action=13;
+      if(selected===2)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -2158,7 +2173,7 @@ async function run() {
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.
-    if(Keychain.contains(CRED_KEY)){
+    if(!state.signedOut&&Keychain.contains(CRED_KEY)){
       try{
         const migrated=migrateSavedCredentials();
         state.credentialCloudStatus=migrated==='conflict'?'conflict':'synced';
@@ -2170,9 +2185,11 @@ async function run() {
       state.notificationMode='result-only-v1.9';state.minutes=0;store.write(state);
       await refreshReminders(state,store);
     }
-    if(action===13){await manageSavedCredentials(state,store);return;}
+    if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(!interactive){
+      // Manual logout is intentional and must never cause background login or warning spam.
+      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
       if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
       if(state.nextAttempt&&Date.now()<state.nextAttempt){await reportBackgroundFailure('RETRY_LATER',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
@@ -2227,7 +2244,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*

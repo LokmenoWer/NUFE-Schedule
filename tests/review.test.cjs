@@ -210,7 +210,56 @@ test('AES CBC matches Node crypto for all supported key sizes',async()=>{const {
 test('CAS fields never fall back to unrelated forms',async()=>{const {m}=await env();a.equal(await m.fieldsFrom('<form id="other"><input name="execution" value="secret"></form>','pwdFromId'),null);});
 test('CAS form entities are decoded inertly',async()=>{const {m}=await env();const f=await m.fieldsFrom('<form id="pwdFromId"><input name="execution" value="e1&amp;s1"><input id="pwdEncryptSalt" value="1234567890123456"></form>','pwdFromId');a.equal(f.execution,'e1&s1');});
 test('credentials save in Keychain only',async()=>{const e=await env();e.m.saveCredentials('  sample-student  ','not-a-real-password');a.equal(e.m.readSavedCredentials().username,'sample-student');a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));a.ok(![...e.files.values()].some(s=>s.includes('not-a-real-password')));});
-test('saved credentials delete without deleting cookies',async()=>{const e=await env();e.keys.set('NUFE.Local.v1.cookies','[]');e.m.saveCredentials('sample','local');e.m.removeSavedCredentials();a.equal(e.m.hasSavedCredentials(),false);a.ok(e.keys.has('NUFE.Local.v1.cookies'));});
+test('legacy credential removal alone does not revoke an existing school session',async()=>{
+ const e=await env();e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('sample','local');e.m.removeSavedCredentials();
+ a.equal(e.m.hasSavedCredentials(),false);
+ a.ok(e.keys.has('NUFE.Local.v1.cookies'));
+});
+test('real sign-out removes both device cookies and synced/legacy credentials but preserves calendar',async()=>{
+ const e=await env();e.baseline([lesson()]);e.add(lesson());
+ const before=JSON.stringify(e.db.map(ev=>({id:ev.identifier,title:ev.title,notes:ev.notes})));
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'local-session',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.m.saveCredentials('sample','local-secret');
+ e.keys.set('NUFE.Local.v1.saved-login',JSON.stringify({version:1,username:'stale',password:'old-secret'}));
+ e.sandbox.__sdk.Dialog.confirm=async()=>true;e.sandbox.__sdk.Dialog.alert=async()=>{};
+ a.equal(await e.m.signOut(e.state,e.store),true);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),false);
+ a.equal(e.keys.has('NUFE.Local.v1.saved-login'),false);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+ a.equal(e.m.hasSavedCredentials(),false);
+ a.equal(e.state.signedOut,true);
+ a.equal(e.state.authPaused,true);
+ a.equal(e.state.runStatus,'signed_out');
+ a.equal(e.state.calendarId,e.calendar.identifier);
+ a.equal(JSON.stringify(e.db.map(ev=>({id:ev.identifier,title:ev.title,notes:ev.notes}))),before);
+ a.equal(e.requests.length,0);
+ a.match(e.m.statusText(e.state),/已退出登录/);
+ a.match(e.m.statusText(e.state),/立即刷新/);
+ a.doesNotMatch(JSON.stringify(e.state),/local-secret|old-secret|local-session/);
+});
+test('cancelling sign-out retains the existing session and credentials',async()=>{
+ const e=await env();
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('sample','not-real');
+ e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ a.equal(await e.m.signOut(e.state,e.store),false);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
+ a.equal(e.m.hasSavedCredentials(),true);
+ a.equal(e.state.signedOut,undefined);
+});
+test('incomplete Keychain removal stays safely signed out and supports retry',async()=>{
+ const e=await env();e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('sample','not-real');
+ e.sandbox.__sdk.Dialog.confirm=async()=>true;
+ e.sandbox.__sdk.Keychain.remove=()=>false;
+ await a.rejects(()=>e.m.signOut(e.state,e.store),code('LOGOUT_INCOMPLETE'));
+ a.equal(e.state.signedOut,true);
+ a.equal(e.state.authPaused,true);
+ a.equal(e.store.read().signedOut,true);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
+ a.match(e.m.statusText(e.state),/已退出登录/);
+});
 test('invalid saved credentials do not leak raw errors',async()=>{const e=await env();e.keys.set('NUFE.Local.v1.saved-login','{"password":"SENSITIVE"}');a.throws(()=>e.m.readSavedCredentials(),code('CREDENTIALS_INVALID'));});
 test('Cookie storage rejects header injection',async()=>{const e=await env();e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'x',value:'bad\r\nInjected',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));a.throws(()=>e.m.readCookieJar(),code('COOKIE_STORAGE'));});
 test('Cookie storage rejects foreign domain',async()=>{const e=await env();e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'x',value:'token',domain:'evil.test',path:'/',expires:0}]));a.throws(()=>e.m.readCookieJar(),code('COOKIE_STORAGE'));});
@@ -442,7 +491,16 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('primary menu contains refresh credentials and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);a.equal(e.requests.length,0);});
+test('main menu exposes only refresh, run status and a destructive sign-out',async()=>{
+ const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
+ e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
+ e.store.write(e.state);e.store.release();await e.m.run();
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
+ a.equal(e.requests.length,0);
+});
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
@@ -696,19 +754,93 @@ test('missing official semester dates fails closed without importing or guessing
  a.equal(e.state.anchors['140'],undefined);
 });
 
-test('credentials open directly from the main menu without a settings submenu',async()=>{
- const e=await env({hostEnv:'index'}),menus=[];
- e.keys.set('NUFE.Local.v1.cookies','[]');e.store.write(e.state);e.store.release();
+test('logout is direct with no save-password submenu and no calendar mutation',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[],alerts=[];
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('student','test-only-secret');
+ e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
-   return menus.length===1?1:null;
+   return 2; // direct destructive logout
  };
+ e.sandbox.__sdk.Dialog.confirm=async options=>{
+   a.match(options.message,/Cookie/);
+   a.match(options.message,/课表与日历不会删除/);
+   return true;
+ };
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);
- a.ok(menus[1].includes('保存账号与密码'));
- a.ok(!menus[1].includes('课表日历'));
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.equal(menus.length,1);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),false);
+ a.equal(e.m.hasSavedCredentials(),false);
+ a.equal(e.store.read().signedOut,true);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
- a.equal(e.store.read().failures,0);
+ a.equal(alerts.at(-1).title,'已退出登录');
+});
+test('after logout, existing calendar opens normal menu rather than first-setup workflow',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
+ await e.m.run();
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态']);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
+ a.equal(e.requests.length,0);
+});
+test('successful verified synchronization clears signed-out state without changing calendar identity',async()=>{
+ const e=await env();e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'stale',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.baseline([lesson()]);e.add(lesson());
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));
+ const cookieHeaders=[];const get=e.m.HTTP.prototype.get;
+ e.m.HTTP.prototype.get=async function(...args){cookieHeaders.push(this.jar.header('https://jwxt.nufe.edu.cn/student/for-std/course-table'));return get.apply(this,args);};
+ await e.m.synchronize(e.state,e.store,e.calendar,true,false,()=>{});
+ a.ok(cookieHeaders.length>0);
+ a.ok(cookieHeaders.every(header=>!header.includes('SESSION=stale')));
+ a.equal(e.state.signedOut,false);
+ a.equal(e.state.authPaused,false);
+ a.equal(e.state.calendarId,e.calendar.identifier);
+ a.equal(e.db.length,1);
+});
+test('a crash after persisting logout intent still offers credential cleanup retry',async()=>{
+ const e=await env({hostEnv:'index'}),menus=[];
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('sample','stale-test');
+ e.store.write(e.state);e.store.release();
+ e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
+ await e.m.run();
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.equal(e.requests.length,0);
+});
+test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
+ const e=await env(),seen=[];
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'old-session',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push(options);
+   return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>login required</html>'};
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(seen.length,1);
+ a.equal(seen[0].headers?.Cookie||'', '');
+ a.equal(checks.find(c=>c.name==='登录会话').level,'正常');
+ a.match(checks.find(c=>c.name==='Cookie 存储').detail,/已退出登录/);
+});
+test('background sync after deliberate logout makes no school request or extra notification',async()=>{
+ const e=await env();
+ e.state.signedOut=true;e.state.authPaused=true;
+ e.keys.set('NUFE.Local.v1.cookies','[]');
+ e.m.saveCredentials('student','test-secret');
+ e.store.write(e.state);e.store.release();
+ await e.m.run();
+ a.equal(e.requests.length,0);
+ a.equal(e.notices.length,0);
+ a.equal(e.store.read().signedOut,true);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
+ a.match(e.sandbox.output,/已退出登录/);
 });
 test('project metadata uses stable NUFE-Schedule branding',()=>{
  const project=JSON.parse(fs.readFileSync(__dirname+'/../script.json','utf8'));
