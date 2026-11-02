@@ -6,24 +6,40 @@ const BEIJING = 8 * HOUR;
 const STATE_DIR = 'NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
 const NAMES = ['一','二','三','四','五','六','日'];
 
+// Read the shared snapshots exactly as the sync engine does. Avoid a hard
+// dependency on statSync: file metadata isn't necessary to parse our own JSON,
+// and unsupported/failed metadata calls used to mask readable caches.
 export function loadWidgetState(files) {
+  let root;
   try {
-    const dir = files.appGroupDocumentsDirectory.replace(/\/$/,'') + '/' + STATE_DIR;
-    if(!files.existsSync(dir)) return {kind:'empty'};
-    const names = files.readDirectorySync(dir,false)
+    root = files.appGroupDocumentsDirectory;
+    if(typeof root!=='string'||!root) return {kind:'invalid',code:'GROUP_PATH'};
+    root = root.replace(/\\/g,'/').replace(/\/$/,'');
+  }catch(_){return {kind:'invalid',code:'GROUP_PATH'};}
+  const dir = root + '/' + STATE_DIR;
+  try {
+    if(!files.existsSync(dir)) return {kind:'empty',code:'NO_CACHE_DIR'};
+  }catch(_){return {kind:'invalid',code:'CACHE_ACCESS'};}
+  let names;
+  try {
+    names = files.readDirectorySync(dir,false)
       .map(x=>String(x).split('/').pop())
       .filter(x=>/^state-\d{10}\.json$/.test(x)).sort();
-    if(!names.length) return {kind:'empty'};
-    const filename = dir + '/' + names[names.length-1];
-    const stat = files.statSync(filename);
-    if(stat.size > 4000000) return {kind:'invalid'};
-    const raw = files.readAsStringSync(filename);
-    if(typeof raw!=='string'||raw.length>4000000) return {kind:'invalid'};
-    const data = JSON.parse(raw);
-    if(!data||data.version!==1||!data.semesters||typeof data.semesters!=='object'
-        ||Array.isArray(data.semesters)) return {kind:'invalid'};
-    return {kind:'ready',state:data};
-  }catch(_){return {kind:'invalid'};}
+  }catch(_){return {kind:'invalid',code:'CACHE_LIST'};}
+  if(!names.length)return {kind:'empty',code:'NO_STATE'};
+  const filename = dir + '/' + names[names.length-1];
+  let raw;
+  try {raw=files.readAsStringSync(filename);}
+  catch(_){return {kind:'invalid',code:'CACHE_READ'};}
+  if(typeof raw!=='string'||!raw.length||raw.length>4*1024*1024)
+    return {kind:'invalid',code:'CACHE_SIZE'};
+  let state;
+  try {state=JSON.parse(raw);}
+  catch(_){return {kind:'invalid',code:'CACHE_JSON'};}
+  if(!state||state.version!==1||!state.semesters||
+     typeof state.semesters!=='object'||Array.isArray(state.semesters))
+    return {kind:'invalid',code:'CACHE_SCHEMA'};
+  return {kind:'ready',state};
 }
 
 export function weekStartBeijing(now){

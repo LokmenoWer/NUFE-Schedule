@@ -79,14 +79,53 @@ test('reads only latest verified generation of App Group cache without fallback 
     appGroupDocumentsDirectory:'/group',
     existsSync:p=>p===dir,
     readDirectorySync:()=>['state-0000000002.json','state-0000000001.json','run-lock.json'],
-    statSync:()=>({size:200}),
+    // Widget extension may not expose metadata queries; the reader must not require them.
     readAsStringSync:path=>path.endsWith('0000000002.json')?'{broken':JSON.stringify(make([]))
   };
-  a.equal(core.loadWidgetState(files).kind,'invalid');
+  const broken=core.loadWidgetState(files);
+  a.equal(broken.kind,'invalid');
+  a.equal(broken.code,'CACHE_JSON');
   files.readAsStringSync=()=>JSON.stringify(make([]));
   a.equal(core.loadWidgetState(files).kind,'ready');
 });
 
+test('widget reads the same shared directory and state file as the sync engine without statSync',()=>{
+ const target='/shared/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const expected=target+'/state-0000000372.json',seen=[];
+ const f={
+   appGroupDocumentsDirectory:'/shared',
+   existsSync:p=>{seen.push('exists:'+p);return p===target;},
+   readDirectorySync:p=>{seen.push('list:'+p);return [expected,'run-lock.json'];},
+   readAsStringSync:p=>{seen.push('read:'+p);return JSON.stringify(make([
+     ev('course','正常课程','2026-11-03T02:00:00Z','2026-11-03T04:15:00Z')
+   ]));}
+ };
+ const result=core.loadWidgetState(f);
+ a.equal(result.kind,'ready');
+ a.equal(result.state.semesters['161'].events[0].title,'正常课程');
+ a.deepEqual(seen,['exists:'+target,'list:'+target,'read:'+expected]);
+});
+test('widget diagnoses each cache failure stage without exposing any file contents',()=>{
+ const dir='/shared/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const base={
+   appGroupDocumentsDirectory:'/shared',
+   existsSync:()=>true,
+   readDirectorySync:()=>['state-0000000009.json'],
+   readAsStringSync:()=>JSON.stringify(make([]))
+ };
+ a.equal(core.loadWidgetState({...base,appGroupDocumentsDirectory:undefined}).code,'GROUP_PATH');
+ a.equal(core.loadWidgetState({...base,existsSync:()=>{throw Error('private path');}}).code,'CACHE_ACCESS');
+ a.equal(core.loadWidgetState({...base,readDirectorySync:()=>{throw Error('private path');}}).code,'CACHE_LIST');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>{throw Error('sensitive contents');}}).code,'CACHE_READ');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>'{private contents'}).code,'CACHE_JSON');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=>JSON.stringify({version:2,semesters:{}})}).code,'CACHE_SCHEMA');
+ a.equal(core.loadWidgetState({...base,readAsStringSync:()=> 'x'.repeat(4*1024*1024+1)}).code,'CACHE_SIZE');
+ a.equal(core.loadWidgetState({...base,readDirectorySync:()=>[]}).code,'NO_STATE');
+ const out=core.loadWidgetState({...base,existsSync:()=>false});
+ a.equal(out.kind,'empty');a.equal(out.code,'NO_CACHE_DIR');
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/诊断：\{code\|\|'UNKNOWN'\}/);
+});
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});
   a.equal(result.kind,'empty');

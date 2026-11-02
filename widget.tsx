@@ -116,21 +116,24 @@ function SmallPanel({model}){
   </VStack>;
 }
 
-function EmptyPanel({error=false}){
-  return <VStack alignment="leading" spacing={12} padding={16}
+function EmptyPanel({kind='empty',code=''}) {
+  const failure=kind==='invalid';
+  const label=failure?'缓存读取失败':'尚无课表缓存';
+  const guidance=failure?'请更新后重新打开组件；如仍失败，请反馈下方代码':
+    '打开 NUFE-Schedule 完成首次课表同步';
+  return <VStack alignment="leading" spacing={9} padding={16}
     widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-    <Text font={17} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 本周课表</Text>
-    <Text font={12} foregroundStyle={COLORS.faint}>
-      {error?'课表缓存读取异常，请打开 NUFE-Schedule 检查':
-       '首次同步成功后，课程会自动显示在这里'}
-    </Text>
+    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 本周课表</Text>
+    <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
+    <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
+    {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
   </VStack>;
 }
 
 const snapshot=loadWidgetState(FileManager);
 if(snapshot.kind!=='ready'){
-  Widget.present(<EmptyPanel error={snapshot.kind==='invalid'}/>,
+  Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code}/>,
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
 }else{
   const model=buildWeek(snapshot.state,Date.now());
