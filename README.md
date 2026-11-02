@@ -24,7 +24,15 @@ NUFE-Schedule 是面向 NUFE 学生的 iPhone 本地课表同步工具。项目�
 
 ## 安装
 
-在 Scripting 中通过以下固定 ZIP 地址导入项目，或将仓库内的 `index.tsx`、`intent.tsx` 和 `script.json` 加入同名项目：
+在 Scripting 主界面右上角选择 **「＋」→「导入远程脚本」**，输入项目提供的 GitHub Release ZIP 下载地址。导入后会生成名为 `NUFE-Schedule` 的项目。也可以手动使用仓库中的 `index.tsx`、`intent.tsx` 和 `script.json` 创建同名项目。
+
+**步骤一：打开远程导入入口。**
+
+<img src="docs/images/scripting-import-menu.webp" alt="Scripting 主界面中选择导入远程脚本的操作入口" width="330">
+
+**步骤二：输入安装包地址。** Scripting 的「链接」输入框支持 ZIP 文件 URL，填写下方地址后执行导入。
+
+<img src="docs/images/scripting-remote-zip.webp" alt="Scripting 远程导入页面，显示可填写 GitHub ZIP 下载链接的输入框" width="330">
 
 **安装包下载地址：**
 
@@ -50,10 +58,14 @@ https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zi
 
 ### 快捷指令自动同步
 
-1. 打开 iOS **快捷指令**，添加 **Scripting → 运行意图脚本**。
-2. 选择 `NUFE-Schedule`，其他参数保持空白。
-3. 先手动运行一次，确认同步成功。
-4. 在“自动化”中设置所需触发时间，并选择“立即运行”。
+1. 打开 iOS **「快捷指令」→「自动化」**，新建个人自动化，选择希望执行的触发条件（例如每天日出或指定时间），并设置为「立即运行」。
+2. 添加 **Scripting 的「使用参数、文本、链接运行」** 动作，在脚本选择项中指定 `NUFE-Schedule`。无需额外输入图片、文件或其他参数。
+3. 可按需关闭自动化的「通知」或该动作的「运行时显示」「运行时打开」选项，减少日常干扰。具体选项以所安装的 iOS、Scripting 版本为准。
+4. 保存前先在快捷指令中手动执行一次，确认课表能够正常更新。
+
+**自动化配置示例：**
+
+<img src="docs/images/shortcuts-automation.webp" alt="iOS 快捷指令自动化示例：每天日出触发 Scripting 运行 NUFE-Schedule" width="330">
 
 后台入口为 `intent.tsx`，无需通过 URL 打开 Scripting。后台同步优先检查当前学期，并轮换处理学校列出的历史学期；首次覆盖全部历史学期可能需要多次运行。
 
