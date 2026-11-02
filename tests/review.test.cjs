@@ -141,9 +141,8 @@ test('compact status shows outcome and hides technical diagnostics',async()=>{
  e.state.runStatus='success';e.state.lastCheck='2026-11-02T06:30:00.000Z';
  const concise=e.m.statusText(e.state);
  a.match(concise,/上次完成检查：2026-11-02 14:30/);
- a.match(concise,/非实时状态/);
- a.doesNotMatch(concise,/最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
- a.match(e.m.diagnosticHistoryText(e.state),/最近步骤（北京时间）/);
+ a.doesNotMatch(concise,/未实时核验|非实时状态|最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
+ a.match(concise,/课表日历：/);
  e.state.resultNoticeError='NOTIFICATION_FAILED';
  a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
 });
@@ -195,7 +194,7 @@ test('unclassified HTTP throttling and oversized replies have actionable explana
  a.match(e.m.reasonFor('HTTP_429'),/429/);
  a.match(e.m.actionFor('HTTP_429'),/限流/);
  a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
- a.match(e.m.actionFor('CALENDAR_READONLY'),/课表日历/);
+ a.match(e.m.actionFor('CALENDAR_READONLY'),/原日历/);
 });
 test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
@@ -221,6 +220,67 @@ test('second background invocation does not start while a previous lock is held'
  a.equal(e.db.length,0);
  a.equal(e.store.read().failures,0);
 });
+test('manual school login saves to Keychain only after verified success',async()=>{
+ const e=await env();let handler=null,tableVisits=0;
+ e.sandbox.__sdk.WebViewController=class{
+   async addScriptMessageHandler(_name,cb){handler=cb;}
+   async loadHTML(){return true;}
+   async present(){await handler({username:'verified-student',password:'verified-password'});}
+   dismiss(){}dispose(){}
+ };
+ const html='var personId=100;var currentSemester={"id":161};';
+ const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table'){
+     return {url,text:++tableVisits===1?'<html>login required</html>':html};
+   }
+   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {
+     url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
+   };
+   if(opt.body)return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:html};
+   return {url,text:''};
+ },authJSON:async()=>({isNeed:false})};
+ const page=await e.m.coursePage(http,true);
+ a.match(page,/personId=100/);
+ const saved=e.m.readSavedCredentials();
+ a.equal(saved.username,'verified-student');a.equal(saved.password,'verified-password');
+ a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
+ a.ok(![...e.files.values()].some(v=>String(v).includes('verified-password')));
+});
+test('failed school authentication never saves a password',async()=>{
+ const e=await env();let handler;
+ e.sandbox.__sdk.WebViewController=class{
+   async addScriptMessageHandler(_name,fn){handler=fn;}
+   async loadHTML(){return true;}
+   async present(){await handler({username:'student',password:'invalid-password'});}
+   dismiss(){}dispose(){}
+ };
+ let visits=0;
+ const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table')return {url,text:'not authenticated'};
+   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
+   if(opt.body){visits++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'invalid'};}
+   return {url,text:''};
+ },authJSON:async()=>({isNeed:false})};
+ await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
+ a.equal(visits,1);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+test('one SMS challenge requires only its code and selects the schools trusted-device option',async()=>{
+ const e=await env();let prompts=0,codePosts=0,submitBodies=[];
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompts++;return '654321';};
+ const http={authJSON:async(url,opt)=>{
+   if(url.includes('getDynamicCodeByReauth.do')){codePosts++;return {res:'success'};}
+   submitBodies.push(opt.body);return {code:'success'};
+ },get:async()=>({})};
+ const page={url:'https://authserver.nufe.edu.cn/authserver/login',text:JSON.stringify({
+   reAuthType:'3',service:'https://jwxt.nufe.edu.cn/student/sso/login',
+   isSleepAccount:'0',isMultifactor:'true',reAuthUserId:'student'
+ })};
+ await e.m.mfa(http,page);
+ a.equal(prompts,1);a.equal(codePosts,1);a.equal(submitBodies.length,1);
+ a.match(submitBodies[0],/skipTmpReAuth=true/);
+ a.match(submitBodies[0],/dynamicCode=654321/);
+});
 test('automatic login without credentials stops before submitting password',async()=>{const e=await env();let count=0;const http={get:async()=>{count++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1"></form>'}}};await a.rejects(()=>e.m.coursePage(http,false),code('AUTH_REQUIRED'));a.equal(count,2);});
 test('automatic login encountering MFA never opens UI or attempts codes',async()=>{const e=await env();const http={get:async()=>({url:'https://authserver.nufe.edu.cn/authserver/login',text:'isMultifactor=true'})};await a.rejects(()=>e.m.coursePage(http,false),code('AUTH_INTERACTIVE_REQUIRED'));});
 test('automatic captcha requirement never encrypts or submits password',async()=>{const e=await env();let posts=0;const http={jar:new e.m.CookieJar(),get:async(url,opt)=>{if(opt&&opt.body)posts++;return {text:''}},authJSON:async()=>({isNeed:true})};const page={url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e1s1"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};await a.rejects(()=>e.m.passwordLogin(http,page,'sample','local-password',false),code('AUTH_INTERACTIVE_REQUIRED'));a.equal(posts,0);});
@@ -231,11 +291,22 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('primary menu contains only refresh, settings and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);a.equal(e.requests.length,0);});
+test('primary menu contains refresh credentials and status',async()=>{const e=await env({mode:'menu',hostEnv:'index'}),menus=[];e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;e.keys.set('NUFE.Local.v1.cookies','[]');e.sandbox.Alert=class{constructor(){this.actions=[];}addAction(t){this.actions.push(t);}addCancelAction(){}async presentSheet(){menus.push(this.actions);return 2;}async presentAlert(){return 0;}};e.store.write(e.state);e.store.release();await e.m.run();a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);a.equal(e.requests.length,0);});
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
-test('Scripting first provisioning goes directly to binding and sync, not a main menu',async()=>{const e=await env({hostEnv:'index'});e.state.calendarId=null;const alerts=[];e.sandbox.__sdk.Dialog.confirm=async()=>true;e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.ok(e.store.read().calendarId);a.equal(e.store.read().runStatus,'success');a.equal(alerts.length,1);a.match(alerts[0].title,/成功/);});
+test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
+ const e=await env({hostEnv:'index'});e.state.calendarId=null;const alerts=[],all=[e.other];
+ e.sandbox.__sdk.Calendar.forEvents=async()=>all;
+ e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'new-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
+ e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
+ e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
+ loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
+ a.equal(e.store.read().calendarId,'new-icloud');
+ a.equal(e.store.read().calendarTitle,'Custom Calendar');
+ a.equal(e.store.read().runStatus,'success');
+ a.equal(alerts.length,1);a.match(alerts[0].title,/成功/);
+});
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);});
 test('Scripting native fetch cancels redirect and exposes parsed cookie metadata',async()=>{const e=await env();let stopped=false;e.sandbox.fetchImpl=async(url,opt)=>{a.equal(opt.allowInsecureRequest,false);a.equal(await opt.handleRedirect({url:'https://jwxt.nufe.edu.cn/student/login'}),null);stopped=true;return {status:302,headers:{forEach:fn=>{fn('/student/login','location');},get:()=>null},cookies:[{name:'school',value:'local-token',domain:'jwxt.nufe.edu.cn',path:'/',expiresDate:null}],mimeType:'text/html',text:async()=>''};};const req=new e.m.ScriptingAdapter.Request('https://jwxt.nufe.edu.cn/student/sso/login');let redirected='';req.onRedirect=r=>{redirected=r.url;return null;};await req.loadString();a.ok(stopped);a.equal(redirected,'https://jwxt.nufe.edu.cn/student/login');a.equal(req.response.cookies[0].name,'school');});
@@ -295,104 +366,119 @@ test('verified duplicated legacy title is removed without touching kept lesson',
   a.equal(e.db.length,1);a.equal(e.db[0].identifier,good.identifier);
 });
 
-test('renaming a bound calendar retains its identifier and existing state',async()=>{
+test('renaming a bound calendar never triggers an automatic rename',async()=>{
  const e=await env({hostEnv:'index'});
- e.calendar.title='\u5357\u8d22\u8bfe\u8868';e.calendar.save=async()=>{};
+ e.calendar.title='My Calendar';let saves=0;e.calendar.save=async()=>{saves++;};
  e.state.calendarId=e.calendar.identifier;e.store.write(e.state);
- const selected=await e.m.pickCalendar(e.state,e.store,false);
- a.equal(selected.identifier,'calendar-dedicated');
- a.equal(selected.title,'课表');
- a.equal(e.store.read().calendarId,'calendar-dedicated');
+ const selected=await e.m.pickCalendar(e.state,e.store);
+ a.equal(selected.title,'My Calendar');a.equal(saves,0);
+ a.equal(e.store.read().calendarTitle,'My Calendar');
 });
-test('renamed calendar is selected using the stored identifier',async()=>{
- const e=await env();e.state.calendarId=e.calendar.identifier;e.calendar.title='课表';e.store.write(e.state);
- const picked=await e.m.pickCalendar(e.state,e.store,false);
- a.equal(picked.identifier,e.state.calendarId);
+test('calendar identity is independent of its title',async()=>{
+ const e=await env();e.state.calendarId=e.calendar.identifier;e.calendar.title='Study 2026';
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.identifier,e.state.calendarId);a.equal(picked.title,'Study 2026');
 });
-
-function missingCalendar(e,{failCreate=[],lost=false}={}){
+function missingCalendar(e,{lost=false}={}){
  const list=[e.other],created=[];
  e.sandbox.__sdk.Calendar.forEvents=async()=>list;
- e.sandbox.__sdk.Calendar.create=async o=>{created.push(o.sourceType);if(failCreate.includes(o.sourceType))throw Error('no source');return {identifier:'calendar-new',title:o.title,allowsContentModifications:true,isSubscribed:false,save:async function(){list.push(this);}};};
- e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter='setup';e.state.calendarId=lost?'calendar-gone':null;
+ e.sandbox.__sdk.Calendar.create=async o=>{
+   created.push(o);
+   return {identifier:'calendar-new',title:o.title,source:{type:'calDAV',title:'iCloud'},
+     allowsContentModifications:true,isSubscribed:false,save:async function(){list.push(this);}};
+ };
+ e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter='setup';
+ e.state.calendarId=lost?'calendar-gone':null;
  return {list,created};
 }
 const setConfirm=(e,answer)=>{const asked=[];e.sandbox.__sdk.Dialog.confirm=async o=>{asked.push(o);return answer;};return asked;};
-test('missing dedicated calendar is created in iCloud only after confirmation',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);
+const setName=(e,name='Custom lessons')=>{const asked=[];e.sandbox.__sdk.Dialog.prompt=async o=>{asked.push(o);return name;};return asked;};
+test('first setup creates a custom-named iCloud calendar and binds its ID',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e),prompt=setName(e,'Semester ✨');
  const picked=await e.m.pickCalendar(e.state,e.store);
- a.equal(asked.length,1);a.deepEqual(h.created,['calDAV']);
- a.equal(picked.identifier,'calendar-new');a.equal(e.store.read().calendarId,'calendar-new');
+ a.equal(prompt.length,1);a.equal(h.created.length,1);
+ a.equal(h.created[0].sourceType,'calDAV');a.equal(h.created[0].title,'Semester ✨');
+ a.equal(picked.title,'Semester ✨');a.equal(e.store.read().calendarId,'calendar-new');
 });
-test('declining calendar creation creates nothing and does not bind',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e);setConfirm(e,false);
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
- a.deepEqual(h.created,[]);a.equal(e.state.calendarId,null);
+test('canceling calendar naming never creates or binds a calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e,null);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CANCELLED'));
+ a.equal(h.created.length,0);a.equal(e.state.calendarId,null);
 });
-test('calendar creation falls back to local and reports failure when nothing is readable back',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{failCreate:['calDAV']});setConfirm(e,true);
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,'calendar-new');a.deepEqual(h.created,['calDAV','local']);
- const f=await env({hostEnv:'index'}),g=missingCalendar(f,{failCreate:['calDAV','local']});setConfirm(f,true);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CALENDAR_CREATE_FAILED'));a.equal(g.list.length,1);
+test('iCloud creation never falls back to a local calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e);
+ e.sandbox.__sdk.Calendar.create=async options=>{h.created.push(options);throw Error('calendar unavailable');};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
+ a.deepEqual(h.created.map(x=>x.sourceType),['calDAV']);
 });
-test('failed readback does not adopt an unrelated calendar or fall back twice',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);
- e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o.sourceType);return {identifier:'new-but-unconfirmed',title:o.title,save:async()=>{h.list.push({identifier:'older-hidden',title:'课表',allowsContentModifications:true,isSubscribed:false});}};};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
- a.equal(asked.length,1);a.deepEqual(h.created,['calDAV']);a.equal(e.state.calendarId,null);
+test('non-iCloud CalDAV creation must not silently bind a different account',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e);
+ e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o);return {identifier:'wrong-source',title:o.title,source:{type:'calDAV',title:'Other Account'},allowsContentModifications:true,isSubscribed:false,save:async function(){h.list.push(this);}};};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_NOT_ICLOUD'));
+ a.equal(e.state.calendarId,null);a.equal(h.created.length,1);
 });
-
-test('empty calendar list reports permission and never creates a calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);h.list.length=0;
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('failed create readback never adopts an unrelated same-name calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);setName(e,'School');
+ e.sandbox.__sdk.Calendar.create=async o=>{h.created.push(o);return {identifier:'uncertain',title:o.title,save:async()=>{h.list.push({identifier:'other',title:o.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false});}};};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_CREATE_FAILED'));
+ a.equal(h.created.length,1);a.equal(e.state.calendarId,null);
 });
-const revealOnAccess=(e,h,...cals)=>{h.list.length=0;e.sandbox.__sdk.Script.requestAccess=async apis=>{a.deepEqual([...apis],['calendar']);h.list.push(e.other,...cals);return apis;};};
-test('calendar revealed by the access request still needs binding confirmation',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
- a.equal(asked.length,1);a.match(asked[0].message,/专用课表日历模式/);a.deepEqual(h.created,[]);
- const f=await env({hostEnv:'index'}),g=missingCalendar(f);setConfirm(f,false);revealOnAccess(f,g,f.calendar);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CANCELLED'));a.equal(f.state.calendarId,null);a.deepEqual(g.created,[]);
+test('empty calendar list reports permission instead of creating',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e);h.list.length=0;setName(e);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
+ a.equal(h.created.length,0);
 });
-test('calendar revealed by the access request still passes rebind checks',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);revealOnAccess(e,h,e.calendar);
- e.baseline([lesson()]);e.state.calendarId='calendar-gone';
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(e.state.calendarId,'calendar-gone');
- const f=await env({hostEnv:'index'}),g=missingCalendar(f,{lost:true});setConfirm(f,true);revealOnAccess(f,g,f.calendar);f.state.tx=tx([],[]);
- await a.rejects(f.m.pickCalendar(f.state,f.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(f.state.calendarId,'calendar-gone');
+test('missing former calendar permits choosing a matching owned calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
+ e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.calendar];
+ h.list.push(e.calendar);
+ const rec=lesson();e.baseline([rec]);e.add(rec);e.state.calendarId='calendar-gone';
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.identifier,e.calendar.identifier);
+ a.equal(e.store.read().calendarId,e.calendar.identifier);
 });
-test('bound calendar revealed by the access request is reused without prompting',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);e.state.calendarId=e.calendar.identifier;
- a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('an existing calendar cannot be rebound when there is no owned baseline',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
+ e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.other];
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
+ a.equal(e.state.calendarId,'calendar-gone');
 });
-test('pending transaction blocks creating a replacement calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);e.state.tx=tx([],[]);
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
- a.equal(asked.length,0);a.deepEqual(h.created,[]);
+test('missing former calendar blocks rebinding a personal calendar without owned lessons',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>0;
+ e.sandbox.__sdk.Calendar.presentChooser=async()=>[e.other];
+ e.baseline([lesson()]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
+ a.equal(e.state.calendarId,'calendar-gone');
 });
-test('replacing a lost calendar warns about duplicates and rewrites every lesson into the new calendar',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);
- const rec=e.m.expand(raw([activity({weekIndexes:[1]})]),161,'2026-09-07').events.map(x=>({...x,id:'lesson-1'}));
- e.baseline(rec);e.state.semesters['161'].index={'lesson-1':'event-in-gone-calendar'};
- e.sandbox.__sdk.Dialog.alert=async()=>{};
- loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);
- a.match(asked[0].message,/重复/);a.deepEqual(h.created,['calDAV']);
- const s=e.store.read();a.equal(s.lastError,null);a.equal(s.runStatus,'success');a.equal(s.calendarId,'calendar-new');
- a.equal(e.db.length,1);a.equal(e.db[0].calendar.identifier,'calendar-new');
+test('missing calendar can create a replacement after a duplicate warning',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true}),asked=setConfirm(e,true);setName(e,'Replacement');
+ e.sandbox.__sdk.Dialog.actionSheet=async()=>1;
+ const picked=await e.m.pickCalendar(e.state,e.store);
+ a.equal(picked.title,'Replacement');
+ a.equal(asked.length,1);a.match(asked[0].message,/重复/);
+ a.equal(e.state.calendarId,'calendar-new');
 });
-test('run superseded during the creation dialog does not create a calendar',async()=>{
+test('pending transaction blocks selection or creation of a different calendar',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setName(e);
+ e.state.tx=tx([],[]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));
+ a.equal(h.created.length,0);
+});
+test('canceled calendar creation does not proceed after another run owns cancellation',async()=>{
  const e=await env({hostEnv:'index'}),h=missingCalendar(e);
- e.sandbox.__sdk.Dialog.confirm=async()=>{a.equal(e.store.requestCancelActive(),true);return true;};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('SYNC_SUPERSEDED'));a.deepEqual(h.created,[]);
+ e.sandbox.__sdk.Dialog.prompt=async()=>{a.equal(e.store.requestCancelActive(),true);return 'My schedule';};
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('SYNC_SUPERSEDED'));
+ a.equal(h.created.length,0);
 });
 test('background sync never creates a calendar',async()=>{
  const e=await env(),created=[];e.state.calendarId='missing-calendar';
  e.sandbox.__sdk.Calendar.create=async o=>{created.push(o);throw Error('unexpected');};
- await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_MISSING'));a.deepEqual(created,[]);
+ await a.rejects(()=>e.m.pickCalendar(e.state,e.store),code('CALENDAR_MISSING'));
+ a.equal(created.length,0);
 });
-
 test('school semester start automatically anchors historical spring timetable without prompting',async()=>{
  const e=await env({hostEnv:'intent'});
  const http={json:async url=>{
@@ -423,18 +509,17 @@ test('missing official semester dates fails closed without importing or guessing
  a.equal(e.state.anchors['140'],undefined);
 });
 
-test('settings menu contains only credentials and the calendar, with no advanced actions',async()=>{
+test('credentials open directly from the main menu without a settings submenu',async()=>{
  const e=await env({hostEnv:'index'}),menus=[];
- e.keys.set('NUFE.Local.v1.cookies','[]');
- e.state.calendarId=e.calendar.identifier;
- e.store.write(e.state);e.store.release();
+ e.keys.set('NUFE.Local.v1.cookies','[]');e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
    return menus.length===1?1:null;
  };
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','账号与日历设置','运行状态']);
- a.deepEqual(Array.from(menus[1]),['自动登录凭据','课表日历']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','自动登录凭据','运行状态']);
+ a.ok(menus[1].includes('保存账号与密码'));
+ a.ok(!menus[1].includes('课表日历'));
  a.equal(e.requests.length,0);
  a.equal(e.store.read().failures,0);
 });
@@ -508,11 +593,12 @@ test('credential form captures both fields before WebView dismissal',async()=>{
   dismiss(){dismissed=true;}
   dispose(){disposed=true;}
  };
- const result=await e.m.credentialForm({title:'NUFE 登录',showRemember:true});
- a.equal(result.username,'test-student');a.equal(result.password,'test-password');a.equal(result.remember,true);
+ const result=await e.m.credentialForm({title:'NUFE 登录'});
+ a.equal(result.username,'test-student');a.equal(result.password,'test-password');
+ a.equal(Object.hasOwn(result,'remember'),false);
  a.equal(presented,true);a.equal(dismissed,true);a.equal(disposed,true);a.equal(afterDismissEvaluated,false);
  a.ok(html.includes('type="password"'));a.ok(html.includes('id="account"'));
- a.ok(html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
+ a.ok(!html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
  a.equal(await requestGuard({url:'https://example.org'}),false);
  a.equal(await requestGuard({url:'about:blank'}),true);
 });
@@ -527,7 +613,7 @@ test('closing the credential form without submitting cancels without saving',asy
  await a.rejects(()=>e.m.credentialForm({showRemember:true}),code('CANCELLED'));
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
-test('credential form without opt-in does not save to iCloud',async()=>{
+test('credential form itself does not persist before school authentication',async()=>{
  const e=await env();let handler;
  e.sandbox.__sdk.WebViewController=class{
   async addScriptMessageHandler(_name,callback){handler=callback;}
@@ -536,8 +622,9 @@ test('credential form without opt-in does not save to iCloud',async()=>{
   dismiss(){}
   dispose(){}
  };
- const result=await e.m.credentialForm({showRemember:true});
- a.equal(result.remember,false);
+ const result=await e.m.credentialForm();
+ a.equal(result.username,'student');
+ a.equal(Object.hasOwn(result,'remember'),false);
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 
@@ -550,7 +637,7 @@ test('WebView initialization timeout safely falls back to native secure inputs',
  e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
  e.sandbox.__sdk.Dialog.confirm=async()=>false;
  const r=await e.m.credentialForm({showRemember:true});
- a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(r.remember,false);
+ a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(Object.hasOwn(r,'remember'),false);
  a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
 });
 
@@ -779,19 +866,21 @@ test('a malformed Cookie storage error offers only local session reset',async()=
  a.equal(e.state.nextAttempt,0);
  a.equal(e.state.lastError,null);
 });
-test('status offers only environment check; recovery belongs inside diagnostics',async()=>{
- const e=await env(),overview=[],diagnostics=[];
- e.sandbox.__sdk.Dialog.confirm=async o=>{overview.push(o);return true;};
- e.sandbox.__sdk.Dialog.actionSheet=async o=>{diagnostics.push(o);return o.actions.length>1?1:null;};
+test('status offers self-check with recovery only on a matching failure and never offers detailed logs',async()=>{
+ const e=await env(),confirms=[],alerts=[];
+ e.sandbox.__sdk.Dialog.confirm=async o=>{confirms.push(o);return true;};
+ e.sandbox.__sdk.Dialog.alert=async o=>{alerts.push(o);};
  e.state.lastError='COOKIE_STORAGE';e.state.runStatus='failed';
  a.equal(await e.m.showRunStatus(e.state,e.store),'cookie');
- a.equal(overview.length,1);
- a.equal(overview[0].confirmLabel,'环境自检');
- a.doesNotMatch(overview[0].message,/连续失败：|最近步骤/);
- a.deepEqual(Array.from(diagnostics[0].actions,x=>x.label),['查看详细运行记录','清除异常 Cookie']);
+ a.deepEqual(confirms.slice(0,2).map(o=>o.confirmLabel),['环境自检','清除异常 Cookie']);
+ a.doesNotMatch(confirms[0].message,/连续失败：|最近步骤|详细运行记录/);
+ a.doesNotMatch(confirms[1].message,/详细运行记录/);
  e.state.runStatus='success';
  a.equal(await e.m.showRunStatus(e.state,e.store),null);
- a.deepEqual(Array.from(diagnostics[1].actions,x=>x.label),['查看详细运行记录']);
+ a.equal(confirms.length,3); // Only the overview prompt; no recovery on success.
+ a.equal(alerts.length,1);
+ a.equal(alerts[0].title,'环境自检');
+ a.doesNotMatch(alerts[0].message,/详细运行记录/);
 });
 
 test('environment inspection only reads existing local state and never mutates data',async()=>{
@@ -807,6 +896,54 @@ test('environment inspection only reads existing local state and never mutates d
  a.equal(JSON.stringify([...e.files]),oldFiles);
  a.equal(e.db.length,oldEvents);
  a.equal(e.requests.length,0);
+});
+test('live school session probe verifies authentication using existing cookies',async()=>{
+ const e=await env(),seen=[];
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'local-test-cookie',domain:'jwxt.nufe.edu.cn',hostOnly:true,path:'/',expires:0}]));
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push({url,options});
+   return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',
+     text:async()=>'<html>var personId=100;var currentSemester={"id":161};</html>'};
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ const auth=checks.find(x=>x.name==='登录会话');
+ a.equal(auth.level,'正常');a.match(auth.detail,/刚刚使用本机 Cookie 验证成功/);
+ a.equal(seen.length,1);a.ok(seen[0].options.headers.Cookie.includes('SESSION=local-test-cookie'));
+ a.equal(seen[0].options.method,'GET');a.equal(seen[0].options.body,undefined);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
+ a.equal(e.state.runStatus,undefined);
+});
+test('login-required redirect is classified as expired instead of successful',async()=>{
+ const e=await env();
+ e.sandbox.fetchImpl=async(url,options)=>{
+   if(options.handleRedirect)await options.handleRedirect({url:'https://authserver.nufe.edu.cn/authserver/login'});
+   throw Error('redirect intercepted');
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'注意');
+ a.match(checks.find(x=>x.name==='登录会话').detail,/重新认证/);
+});
+test('unclassifiable page remains unverified even with HTTP 200',async()=>{
+ const e=await env();
+ e.sandbox.fetchImpl=async()=>({status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>hello</html>'});
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'待确认');
+ a.equal(checks.find(x=>x.name==='学校连接').level,'正常');
+});
+test('authentication probe never submits a stored password or follows untrusted URLs',async()=>{
+ const e=await env();
+ e.keys.set('NUFE.Schedule.v1.icloud-credentials',JSON.stringify({version:1,username:'student',password:'SECRET'}));
+ const seen=[];
+ e.sandbox.fetchImpl=async(url,options)=>{
+   seen.push({url,options});
+   if(options.handleRedirect)await options.handleRedirect({url:'https://external.invalid/login'});
+   throw Error('redirect intercepted');
+ };
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='登录会话').level,'待确认');
+ a.equal(seen.length,1);
+ a.ok(!JSON.stringify(seen[0]).includes('SECRET'));
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),true);
 });
 test('self-check distinguishes an inaccessible original calendar from a healthy one',async()=>{
  const e=await env();
@@ -826,7 +963,7 @@ test('self-check flags pending transactions and does not clear their journal',as
  a.equal(e.files.get(e.store.path('run-lock.json')),before);
  a.match(e.m.statusText(e.state),/需要恢复上次写入/);
 });
-test('school connectivity probe carries neither saved Cookie nor passwords',async()=>{
+test('live school connectivity probe uses stored session Cookie but never saved password',async()=>{
  const e=await env(),seen=[];
  e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'secret',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
  e.sandbox.fetchImpl=async(url,options)=>{seen.push({url,options});return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>safe</html>'};};
@@ -834,8 +971,9 @@ test('school connectivity probe carries neither saved Cookie nor passwords',asyn
  a.equal(checks.find(x=>x.name==='学校连接').level,'正常');
  a.equal(seen.length,1);
  a.match(seen[0].url,/^https:\/\/jwxt\.nufe\.edu\.cn\//);
- a.ok(!seen[0].options.headers?.Cookie);
+ a.ok(seen[0].options.headers?.Cookie?.includes('SESSION=secret'));
  a.ok(!seen[0].options.body);
+ a.ok(!JSON.stringify(seen[0].options).includes('password'));
  a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
 });
 test('self-check failure report includes actionable error code without secrets',async()=>{
