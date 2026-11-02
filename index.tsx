@@ -641,8 +641,8 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     const need=await http.authJSON(AUTH+'/checkNeedCaptcha.htl?'+form({username,_:Date.now()}));assert(typeof need.isNeed==='boolean','CAPTCHA');
     let captcha='';if(need.isNeed||/\b_badCredentialsCount\s*=\s*["']?0\b/.test(r.text)) {
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text))await humanSlider(http);
-      else {const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');await QuickLook.present(Image.fromData(image.text));captcha=await input('图形验证码','输入刚才图片中的字符');}
+      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){onStage('等待图形验证');await humanSlider(http);}
+      else {onStage('等待图形验证');const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');await QuickLook.present(Image.fromData(image.text));captcha=await input('图形验证码','输入刚才图片中的字符');}
     }
     onStage(interactive?'本机加密登录密码（原生安全随机数）':'使用 Keychain 凭据进行本机密码加密');
     const encrypted=await encryptPassword(password,fields.salt);password='';
@@ -650,7 +650,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
     if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      await mfa(http,r);
+      onStage('等待二次认证');await mfa(http,r);
     }else if(safeURL(r.url).host==='authserver.nufe.edu.cn'&&/\/login(?:\?|$)/.test(r.url)){
       fail(interactive?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
     }
@@ -669,7 +669,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    await mfa(http,r);r=await http.get(TABLE);pageInfo(r.text);return r.text;
+    onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   if(!interactive){
     const saved=readSavedCredentials();
@@ -1234,9 +1234,90 @@ function stampStage(state,store,stage){
   // Console is safe: stage strings and requestLabel never contain secrets.
   if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[NUFE] '+stage);
 }
-// One local reminder if a non-interactive step takes unusually long. No repeated notification spam.
+// A foreground-only, local progress sheet. Stages are genuine completed
+// operations, not invented percentages. Keep it out of shortcut automations.
+// Native login, captcha and MFA must remain unobstructed by this sheet.
+function safeProgressLabel(message){
+  const m=String(message||'');
+  if(/读取学期|请求学期|课表数据/.test(m))return '正在获取课程信息';
+  if(/写入学期|更新课程|导入|保存/.test(m))return '正在更新 Apple 日历';
+  if(/核验|核对|检查旧|扫描专用日历/.test(m))return '正在核对日历内容';
+  if(/清理|移除/.test(m))return '正在整理旧课程';
+  if(/登录|认证|Cookie|设备指纹|验证码|密码/.test(m))return '正在连接学校认证服务';
+  if(/完成/.test(m))return '课表更新已完成';
+  return '正在刷新课表';
+}
 function createProgress(state,store,interactive){
-  const stage=message=>stampStage(state,store,message);stage.finish=()=>{};return stage;
+  let view=null,closed=false,paused=false,visible=false,generation=0;
+  let latest='正在准备刷新',started=false;
+  function show(){
+    if(!view||closed||paused||visible)return;
+    visible=true;const id=++generation;
+    try{Promise.resolve(view.present({navigationTitle:'正在刷新课表'}))
+      .then(()=>{if(generation===id)visible=false;})
+      .catch(()=>{if(generation===id)visible=false;});}
+    catch(_){visible=false;}
+  }
+  function hide(){
+    paused=true;generation++;visible=false;
+    try{view?.dismiss();}catch(_){}
+  }
+  function paint(){
+    if(!view||closed||paused)return;
+    try{Promise.resolve(view.evaluateJavaScript(
+      'return window.updateStage('+JSON.stringify(latest)+')'))
+      .catch(()=>{});}catch(_){}
+  }
+  const stage=message=>{
+    stampStage(state,store,message);
+    if(!interactive||closed)return;
+    latest=safeProgressLabel(message);
+    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(String(message))){
+      hide();return;
+    }
+    paused=false;
+    if(started)show();
+    paint();
+  };
+  stage.start=async()=>{
+    if(!interactive||closed||started)return;
+    started=true;
+    const Controller=hostAPI('WebViewController');
+    if(typeof Controller!=='function')return;
+    try{
+      view=new Controller({ephemeral:true});
+      view.shouldAllowRequest=async r=>String(r?.url||'')==='about:blank';
+      const html=[
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width,initial-scale=1">',
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; img-src \'none\'; form-action \'none\'">',
+        '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;background:Canvas;color:CanvasText;margin:0;display:grid;min-height:75vh;place-items:center}',
+        '.wrap{text-align:center;padding:24px;max-width:300px}h1{font-size:21px;margin:16px 0 8px}',
+        'p{font-size:15px;color:GrayText;line-height:1.5;margin:0}',
+        '.spinner{width:34px;height:34px;border:3px solid #8a8a8a44;border-top-color:#2476e3;border-radius:50%;margin:auto;animation:spin .85s linear infinite}',
+        '@keyframes spin{to{transform:rotate(360deg)}}small{display:block;margin-top:14px;color:GrayText}</style></head>',
+        '<body><div class="wrap"><div class="spinner" role="progressbar" aria-label="刷新中"></div>',
+        '<h1>正在刷新课表</h1><p id="stage">正在准备刷新</p>',
+        '<small>课程较多时需要一些时间</small></div>',
+        '<script>window.updateStage=function(s){document.getElementById("stage").textContent=String(s).slice(0,80);return true;};</script>',
+        '</body></html>'
+      ].join('');
+      if(!await view.loadHTML(html))throw Error('PROGRESS_LOAD');
+      if(closed){view.dispose();view=null;return;}
+      show();paint();
+    }catch(_){
+      try{view?.dispose();}catch(__){}
+      view=null; // Progress UI must never prevent a calendar refresh.
+    }
+  };
+  stage.finish=()=>{
+    if(closed)return;
+    closed=true;generation++;visible=false;
+    try{view?.dismiss();}catch(_){}
+    try{view?.dispose();}catch(_){}
+    view=null;
+  };
+  return stage;
 }
 // Recognize a previously bound calendar even if it has not yet been renamed.
 // The legacy spelling is encoded solely to preserve migration compatibility.
@@ -2038,6 +2119,8 @@ async function run() {
     __NUFE_BOOT_PHASE='同步运行';
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
+    await progress.start();
+    progress('连接教务系统');
     await synchronize(state,store,calendar,interactive,interactive,progress);
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
@@ -2048,6 +2131,7 @@ async function run() {
       else if(typeof widgets.reloadAll==='function')widgets.reloadAll();
     }}catch(_){}
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
+    if(progress)progress.finish();
     if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await reportRefreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null,state,store);
     if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');
   }catch(e){
@@ -2073,6 +2157,7 @@ async function run() {
     if(!interactive)await reportBackgroundFailure(code,state,store);
     if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[NUFE] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
+      if(progress)progress.finish();
       try{await showFailureRecovery(e,state,store);}
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
@@ -2080,7 +2165,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,safeProgressLabel,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
 else await run();
 
 /*

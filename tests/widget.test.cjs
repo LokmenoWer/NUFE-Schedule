@@ -229,25 +229,28 @@ test('widget UI uses four rolling columns with legible multi-line names and clas
  a.doesNotMatch(ui,/family==='systemLarge'\?9/);
  a.doesNotMatch(ui,/WeeklyPanel/);
 });
-test('auto-focus prefers current then upcoming class without losing previous courses from memory',()=>{
- const mk=(status,title)=>({status,title});
- const classes=[mk('done','早课'),mk('done','第二节'),mk('current','第三节'),mk('upcoming','第四节')];
- let day={index:1,today:true,courses:classes};
- let pick=core.selectVisibleCourses(day,1);
- a.deepEqual(Array.from(pick.courses,c=>c.title),['第三节']);
- a.equal(pick.hiddenBefore,2);a.equal(pick.hiddenAfter,1);
- pick=core.selectVisibleCourses(day,2);
- a.deepEqual(Array.from(pick.courses,c=>c.title),['第三节','第四节']);
- day={...day,courses:classes.map((c,i)=>({...c,status:i<3?'done':'upcoming'}))};
- a.equal(core.selectVisibleCourses(day,1).courses[0].title,'第四节');
- day={...day,courses:classes.map(c=>({...c,status:'done'}))};
- a.equal(core.selectVisibleCourses(day,1).courses[0].title,'第四节');
+test('course overflow stays chronological and reports remaining count',()=>{
+ const courses=['早课','第二节','第三节','第四节'].map((title,i)=>({
+   title,status:i<2?'done':i===2?'current':'upcoming'
+ }));
+ for(const index of [0,1,2,3]){
+   const day={index,today:index===1,courses};
+   const one=core.selectVisibleCourses(day,1);
+   a.equal(one.courses[0].title,'早课');
+   a.equal(one.hiddenAfter,3);
+   const two=core.selectVisibleCourses(day,2);
+   a.deepEqual(Array.from(two.courses,c=>c.title),['早课','第二节']);
+   a.equal(two.hiddenAfter,2);
+   const all=core.selectVisibleCourses(day,5);
+   a.equal(all.courses.length,4);a.equal(all.hiddenAfter,0);
+ }
+ a.equal(core.selectVisibleCourses({courses:[]},1).hiddenAfter,0);
 });
-test('yesterday focuses on last classes while future days start at first class',()=>{
- const courses=Array.from({length:4},(_,i)=>({title:String(i+1),status:'done'}));
- a.deepEqual(Array.from(core.selectVisibleCourses({index:0,today:false,courses},2).courses,c=>c.title),['3','4']);
- a.deepEqual(Array.from(core.selectVisibleCourses({index:2,today:false,courses},2).courses,c=>c.title),['1','2']);
- a.equal(core.selectVisibleCourses({index:1,today:true,courses:[]},1).total,0);
+test('widget has a pure white canvas and simple plus-N remaining classes',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.match(ui,/\+\{window\.hiddenAfter\}节课/);
+ a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
 });
 test('teacher names appear from new mirror or older semester cache',()=>{
  const base=make([ev('a','新课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
@@ -301,7 +304,8 @@ test('preview uses actual courses from a rich 2025-2026-2 teaching week, aligned
  a.equal(m.days[3].courses[0].title,'春季周三课程');
  a.equal(m.courses.some(c=>c.title==='其他教学周周一'),false);
  const focus=core.selectVisibleCourses(m.days[1],1);
- a.equal(focus.courses[0].title,'春季周一第二节');
+ a.equal(focus.courses[0].title,'春季周一第一节');
+ a.equal(focus.hiddenAfter,1);
  a.equal(m.nextAt,date('2026-11-02T07:00:00Z'));
 });
 

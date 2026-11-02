@@ -211,23 +211,12 @@ export function buildRollingDays(state,now=Date.now()){
     empty:courses.length===0};
 }
 
-// WidgetKit does not support gesture-driven continuous scrolling. Move the
-// visible window to the current class (or next class), on each timeline refresh.
+// Fixed chronological order: never jump or auto-focus a different class.
+// When layout capacity is reached, the UI prints "+N节课" for the remainder.
 export function selectVisibleCourses(day,limit=1){
   const all=Array.isArray(day?.courses)?day.courses:[];
   const n=Math.max(1,Math.min(5,Math.trunc(Number(limit)||1)));
-  if(all.length<=n)return {courses:all,hiddenBefore:0,hiddenAfter:0,position:all.length?1:0,total:all.length};
-  let from=0;
-  if(day.index===0)from=Math.max(0,all.length-n);
-  else if(day.today){
-    const active=all.findIndex(c=>c.status==='current');
-    const next=all.findIndex(c=>c.status==='upcoming');
-    from=active>=0?active:next>=0?next:Math.max(0,all.length-n);
-  }
-  const shown=all.slice(from,from+n);
-  return {courses:shown,hiddenBefore:from,
-    hiddenAfter:all.length-from-shown.length,
-    position:shown.length?from+1:0,total:all.length};
+  return {courses:all.slice(0,n),hiddenAfter:Math.max(0,all.length-n),total:all.length};
 }
 
 // TEMPORARY TEST MODE: set this to null to restore the live timetable.

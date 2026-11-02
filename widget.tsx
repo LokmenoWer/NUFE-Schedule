@@ -5,15 +5,11 @@ import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Scri
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, widgetReloadDate } from './widget-data';
 
 const COLORS={
-  dark:{light:'#203451',dark:'#EAF2FF'},
-  blue:{light:'#2C69D1',dark:'#96C1FF'},
-  muted:{light:'#9BA3AF',dark:'#8E99AA'},
-  faint:{light:'#727E91',dark:'#A4B2C5'},
-  finished:{light:'#A3A9B2',dark:'#8C96A4'},
-  doneBg:{light:'#EEF0F3',dark:'#2B3039'},
-  nextBg:{light:'#FFFFFF',dark:'#263348'},
-  activeBg:{light:'#DDEBFF',dark:'#28466E'},
-  headBg:{light:'#E8F0FF',dark:'#1E3B65'}
+  // Opaque white canvas in all appearance modes; only course statuses tint.
+  dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
+  faint:'#727E91', finished:'#929AA7',
+  doneBg:'#F2F3F5', nextBg:'#FFFFFF',
+  activeBg:'#E1EDFF'
 };
 
 function CourseCard({course,compact=false}){
@@ -43,8 +39,7 @@ function DayColumn({day,width,compact=false,maxRows=1}){
   const dayColor=day.today?COLORS.blue:COLORS.dark;
   return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
     frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}
-      background={day.today?{style:COLORS.headBg,shape:{type:'rect',cornerRadius:8}}:undefined}>
+    <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}>
       <Text font={compact?11:13} fontWeight="bold" foregroundStyle={dayColor}>
         {day.label}
       </Text>
@@ -54,9 +49,9 @@ function DayColumn({day,width,compact=false,maxRows=1}){
     {window.courses.length?window.courses.map(c=>
       <CourseCard key={c.id} course={c} compact={compact}/>):
       <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
-    {window.total>window.courses.length?
-      <Text font={compact?8:9} foregroundStyle={COLORS.faint}>
-        {window.position}/{window.total} · 自动定位
+    {window.hiddenAfter>0?
+      <Text font={compact?9:10} foregroundStyle={COLORS.faint}>
+        +{window.hiddenAfter}节课
       </Text>:null}
   </VStack>;
 }
@@ -71,10 +66,10 @@ function RollingPanel({model,family}){
       const width=proxy.size.width,height=proxy.size.height;
       const pad=medium?8:10,gap=medium?5:7;
       const colWidth=Math.max(40,Math.floor((width-2*pad-24-gap*3)/4));
-      const maxRows=!medium&&height>=320?2:1;
+      const maxRows=medium?1:height>=370?3:height>=290?2:1;
       return <VStack alignment="leading" spacing={medium?6:9}
         padding={pad}
-        widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
+        widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="center" spacing={5}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
@@ -103,7 +98,7 @@ function SmallPanel({model}){
   const next=classes.find(x=>x.status==='upcoming');
   const chosen=current||next||classes[classes.length-1];
   return <VStack alignment="leading" spacing={8} padding={13}
-    widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
+    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
     <Text font={14} fontWeight="bold" foregroundStyle={COLORS.dark}>
       {model.previewTerm?'测试 · 今日课程':'今日课程'}
@@ -138,7 +133,7 @@ function EmptyPanel({kind='empty',code=''}) {
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={16}
-    widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
+    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE · 近日课表</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>

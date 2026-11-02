@@ -33,6 +33,44 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
+test('foreground progress uses real stage labels without false percentages or secret data',async()=>{
+ const e=await env({hostEnv:'index'}),pages=[],evaluations=[],modal=[];
+ e.sandbox.__sdk.WebViewController=class {
+   constructor(options){a.equal(options.ephemeral,true);pages.push(this);}
+   async loadHTML(html){a.match(html,/正在刷新课表/);a.doesNotMatch(html,/外部资源/);return true;}
+   present(opts){modal.push('open:'+opts.navigationTitle);return new Promise(resolve=>{this.resolve=resolve;});}
+   async evaluateJavaScript(code){evaluations.push(code);return true;}
+   dismiss(){modal.push('dismiss');this.resolve?.();this.resolve=null;}
+   dispose(){modal.push('dispose');}
+ };
+ const progress=e.m.createProgress(e.state,e.store,true);
+ progress('检查目标日历');await progress.start();
+ progress('读取学期 161');await Promise.resolve();
+ a.ok(evaluations.some(x=>x.includes('正在获取课程信息')));
+ progress('等待输入学校登录信息');await Promise.resolve();
+ a.ok(modal.includes('dismiss'));
+ progress('提交学校认证请求');await Promise.resolve();
+ a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
+ progress.finish();
+ a.ok(modal.includes('dispose'));
+ a.equal(e.m.safeProgressLabel('写入学期 161 的日历事件'),'正在更新 Apple 日历');
+ a.doesNotMatch(JSON.stringify(evaluations),/password=|Cookie=|学号/);
+});
+test('background sync never opens progress UI or adds modal prompts',async()=>{
+ const e=await env({hostEnv:'intent'}),opens=[];
+ e.sandbox.__sdk.WebViewController=class {constructor(){opens.push(true);}};
+ const p=e.m.createProgress(e.state,e.store,false);
+ p('读取学期 161');await p.start();p.finish();
+ a.deepEqual(opens,[]);
+ a.equal(e.state.lastStage,'读取学期 161');
+});
+test('progress UI failure never blocks actual foreground calendar synchronization',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__sdk.WebViewController=class{constructor(){throw Error('webview unavailable');}};
+ const p=e.m.createProgress(e.state,e.store,true);
+ p('开始刷新');await p.start();p('完成本次同步');p.finish();
+ a.equal(e.state.lastStage,'完成本次同步');
+});
 test('widget mirror publishes only non-sensitive verified course fields',async()=>{
  const e=await env();
  const now=Date.parse('2026-11-03T06:10:00.000Z');
