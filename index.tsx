@@ -1153,7 +1153,31 @@ function widgetCacheProjection(state,now=Date.now()){
       if(courses.length>400)return null; // Never silently truncate classes.
     }
   }
-  return {version:1,lastCheck:state.lastCheck,events:courses};
+  // TEMP widget-only preview of the historical 2024-2025 second semester.
+  // Keep its ORIGINAL dates in Storage. widget-data.ts remaps one representative
+  // teaching week for display; calendar synchronization never uses this data.
+  const historical=Object.values(state.semesters).find(term=>
+    term&&term.name==='2024-2025-2'&&term.lastSuccess&&Array.isArray(term.events));
+  let preview=null;
+  if(historical&&historical.events.length<=400){
+    const events=[];
+    for(const e of historical.events){
+      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
+      const start=Date.parse(e.start),end=Date.parse(e.end);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>DAY)continue;
+      events.push({
+        id:String(e.id||'').slice(0,100),
+        title:e.title.slice(0,90),
+        location:String(e.location||'').slice(0,65),
+        teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
+          .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
+          .join('、').slice(0,75),
+        start:e.start,end:e.end
+      });
+    }
+    if(events.length)preview={term:'2024-2025-2',events};
+  }
+  return {version:1,lastCheck:state.lastCheck,events:courses,preview};
 }
 function publishWidgetCache(state,now=Date.now()){
   const storage=HostStorage;
@@ -1938,26 +1962,10 @@ function selectTermIds(info,state,allTerms){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   const rest=available.filter(sid=>sid!==info.current);
-  if(allTerms){
-    // Manual "立即刷新" must not rewrite every historical semester on
-    // every invocation: a long transcript of fully synchronized old terms
-    // can generate thousands of needless EventKit operations.
-    // Import never-synced terms once, then prioritize the current term and
-    // at most one historical term whose last successful check is stale.
-    const missing=rest.filter(id=>!state.semesters?.[String(id)]?.lastSuccess);
-    if(missing.length)return [info.current,...missing];
-    const errorIds=new Set((state.termErrors||[]).map(e=>String(e.sid)));
-    const now=Date.now(),period=7*DAY;
-    const stale=rest.filter(id=>{
-      const checked=Date.parse(state.semesters?.[String(id)]?.lastSuccess||'');
-      return errorIds.has(String(id))||!Number.isFinite(checked)||now-checked>=period;
-    }).sort((a,b)=>{
-      const ta=Date.parse(state.semesters?.[String(a)]?.lastSuccess||'');
-      const tb=Date.parse(state.semesters?.[String(b)]?.lastSuccess||'');
-      return (Number.isFinite(ta)?ta:0)-(Number.isFinite(tb)?tb:0);
-    });
-    return stale.length?[info.current,stale[0]]:[info.current];
-  }
+  // Foreground manual refresh: check every school-listed semester, every time.
+  // Progress feedback stays visible and each term still uses existing
+  // transaction recovery, ownership checks and school error handling.
+  if(allTerms)return [info.current,...rest];
   if(!rest.length)return [info.current];
   const start=((Number(state.cursor)||0)%rest.length+rest.length)%rest.length;
   const count=Math.min(2,rest.length);

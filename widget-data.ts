@@ -30,8 +30,26 @@ export function readWidgetMirror(storage){
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
     events.push(e);
   }
-  return {kind:'ready',state:{lastCheck:obj.lastCheck,
+  let preview=null;
+  // Ignore caches from the previous 2025-2026-2 preview; the next
+  // opening of the main project regenerates the newly chosen test term.
+  if(obj.preview!=null&&obj.preview.term==='2024-2025-2'){
+    if(!obj.preview||
+       !Array.isArray(obj.preview.events)||obj.preview.events.length>400)
+      return {kind:'invalid',code:'STORAGE_SCHEMA'};
+    const items=[];
+    for(const e of obj.preview.events){
+      if(!e||typeof e.title!=='string'||typeof e.location!=='string'||
+         typeof e.start!=='string'||typeof e.end!=='string'||
+         (e.teacher!==undefined&&typeof e.teacher!=='string'))
+        return {kind:'invalid',code:'STORAGE_SCHEMA'};
+      items.push(e);
+    }
+    preview={term:obj.preview.term,events:items};
+  }
+  return {kind:'ready',state:{lastCheck:obj.lastCheck,preview,
     semesters:{widget:{events}}}};
+
 }
 export function loadBestWidgetState(files,storage){
   const mirror=readWidgetMirror(storage);
@@ -204,10 +222,81 @@ export function selectVisibleCourses(day,limit=1){
   return {courses:all.slice(0,n),hiddenAfter:Math.max(0,all.length-n),total:all.length};
 }
 
-// Live timetable uses the actual course dates from the saved sync snapshot.
-// Historical semesters are never shifted to pretend they are current lessons.
+// TEMPORARY TEST MODE: set this to null to restore the live timetable.
+// Only the widget presentation is affected; the sync engine and Apple Calendar
+// continue to use real semester dates and the normal current schedule.
+const WIDGET_PREVIEW_TERM='2024-2025-2';
+
+// Shift the historical teaching week by an integral number of weeks so the
+// original weekdays and time-of-day are preserved. Choose a *real* teaching
+// week with the most classes today, then with the most classes in the 4-day
+// window. Never invent courses, and never mix different historical weeks.
+export function buildHistoricalPreview(state,now=Date.now()){
+  const at=now instanceof Date?now.getTime():Number(now);
+  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
+  const src=state?.preview;
+  if(!src||src.term!==WIDGET_PREVIEW_TERM||!Array.isArray(src.events))return null;
+  const valid=[];
+  for(const e of src.events){
+    if(!e||typeof e.start!=='string'||typeof e.end!=='string')continue;
+    const start=Date.parse(e.start),end=Date.parse(e.end);
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>DAY)continue;
+    valid.push({e,start,end});
+  }
+  if(!valid.length)return null;
+  const weeks=new Set();
+  for(const c of valid){
+    const m=weekStartBeijing(c.start);
+    weeks.add(m);
+    weeks.add(m+7*DAY); // previous Sunday can belong to the 4-day window
+  }
+  const currentMonday=weekStartBeijing(at);
+  const todayOffset=Math.floor((at-currentMonday)/DAY);
+  let best=null;
+  for(const monday of [...weeks].sort((a,b)=>a-b)){
+    // Yesterday/today/tomorrow/day-after; candidate week may cross a week edge.
+    const from=monday+(todayOffset-1)*DAY,to=from+4*DAY;
+    const selected=valid.filter(c=>c.start>=from&&c.start<to);
+    if(!selected.length)continue;
+    const todayStart=from+DAY;
+    const todayCount=selected.filter(c=>c.start>=todayStart&&c.start<todayStart+DAY).length;
+    const uniqueDays=new Set(selected.map(c=>Math.floor((c.start-from)/DAY))).size;
+    const score=todayCount*100+selected.length*10+uniqueDays*3;
+    if(!best||score>best.score||(score===best.score&&monday>best.monday))
+      best={monday,selected,score};
+  }
+  if(!best)return null;
+  const shift=currentMonday-best.monday;
+  const events=best.selected.map(({e,start,end})=>({
+    id:plainText(e.id,100),title:plainText(e.title,90),
+    location:plainText(e.location,65),teacher:plainText(e.teacher,75),
+    start:new Date(start+shift).toISOString(),
+    end:new Date(end+shift).toISOString()
+  }));
+  const model=buildRollingDays({
+    lastCheck:state.lastCheck,
+    semesters:{preview:{events}}
+  },at);
+  return {...model,previewTerm:src.term,
+    previewSourceWeek:new Date(best.monday+BEIJING).toISOString().slice(0,10)};
+}
+// Show the current/next class together when today contains several classes.
+// Earlier completed classes remain in cache, but are not counted in "+N节课".
+export function selectTodayPair(day){
+  const courses=Array.isArray(day?.courses)?day.courses:[];
+  if(courses.length<=1)return {courses,hiddenAfter:0};
+  let at=courses.findIndex(e=>e.status==='current');
+  if(at<0)at=courses.findIndex(e=>e.status==='upcoming');
+  if(at<0)at=Math.max(0,courses.length-2);
+  if(at===courses.length-1)at=Math.max(0,at-1);
+  const shown=courses.slice(at,at+2);
+  return {courses:shown,hiddenAfter:Math.max(0,courses.length-at-shown.length)};
+}
+
 export function buildWidgetModel(state,now=Date.now()){
-  return buildRollingDays(state,now);
+  return WIDGET_PREVIEW_TERM
+    ?buildHistoricalPreview(state,now)
+    :buildRollingDays(state,now);
 }
 
 export function widgetReloadDate(model){

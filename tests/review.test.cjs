@@ -108,22 +108,27 @@ test('widget mirror publishes only non-sensitive verified course fields',async()
  a.equal(saved.events[0].teacher,'张老师');
  a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
 });
-test('published widget cache no longer writes past semester preview data',async()=>{
+test('widget cache mirrors only verified 2024-2025-2 past lessons as separate preview',async()=>{
  const e=await env();
  const now=Date.parse('2026-11-02T08:00:00Z');
  e.baseline([lesson({id:'real',start:'2026-11-03T02:00:00Z',end:'2026-11-03T03:30:00Z'})]);
  e.state.semesters.historical={
-   name:'2025-2026-2',lastSuccess:'2026-06-15T08:00:00Z',
-   events:[lesson({id:'past',start:'2026-04-06T02:00:00Z',end:'2026-04-06T03:30:00Z'})]
+   name:'2024-2025-2',lastSuccess:'2025-06-15T08:00:00Z',
+   events:[
+     lesson({id:'old1',start:'2025-04-08T05:30:00Z',end:'2025-04-08T06:55:00Z'}),
+     lesson({id:'old2',start:'2025-04-08T07:10:00Z',end:'2025-04-08T08:35:00Z'})
+   ]
  };
  e.state.lastCheck='2026-11-02T07:00:00Z';
- const before=JSON.stringify(e.state);
+ const previous=JSON.stringify(e.state);
  a.equal(e.m.publishWidgetCache(e.state,now),true);
  const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
  a.equal(saved.events.length,1);
- a.equal(saved.events[0].title,'高等数学');
- a.equal(Object.hasOwn(saved,'preview'),false);
- a.equal(JSON.stringify(e.state),before);
+ a.equal(saved.preview.term,'2024-2025-2');
+ a.equal(saved.preview.events.length,2);
+ a.equal(saved.preview.events[0].start,'2025-04-08T05:30:00Z');
+ a.equal(JSON.stringify(e.state),previous);
+ a.doesNotMatch(JSON.stringify(saved),/password|cookie|calendarId/);
 });
 test('widget mirror blocks unverified transactions, filters old semesters, and keeps calendar sync independent',async()=>{
  const e=await env();
@@ -433,36 +438,22 @@ test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m
 test('widget degrades gracefully when ListWidget is not defined',async()=>{const e=await env();e.sandbox.config.runsInWidget=true;await a.doesNotReject(async()=>{await e.m.run();});});
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
-test('first manual refresh imports every school-listed semester once',async()=>{
+test('every manual refresh checks all available semesters, including already synced historical ones',async()=>{
  const {m}=await env();
- a.deepEqual(Array.from(m.selectTermIds(
-   {current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]},
-   {cursor:0,semesters:{}},true)),[161,159,160,158]);
-});
-test('routine manual refresh skips successfully checked historical semesters',async()=>{
- const {m}=await env();
- const recent=new Date().toISOString(),info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
- const state={cursor:0,semesters:{
-   159:{lastSuccess:recent},160:{lastSuccess:recent},158:{lastSuccess:recent}
+ const info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};
+ const state={cursor:2,semesters:{
+  158:{lastSuccess:new Date().toISOString()},
+  159:{lastSuccess:new Date().toISOString()},
+  160:{lastSuccess:new Date().toISOString()}
  }};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161]);
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158,159,160]);
+ a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158,159,160]);
+ a.equal(state.cursor,2);
 });
-test('manual refresh checks one stale historical term and retries failed terms',async()=>{
+test('full foreground sync selects unique school-listed semester identifiers once',async()=>{
  const {m}=await env();
- const recent=new Date().toISOString(),old=new Date(Date.now()-18*86400000).toISOString(),older=new Date(Date.now()-22*86400000).toISOString();
- const info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
- const state={semesters:{159:{lastSuccess:old},160:{lastSuccess:recent},158:{lastSuccess:older}}};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,158]);
- state.semesters[158].lastSuccess=recent;state.termErrors=[{sid:'160',code:'NETWORK'}];
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,159]); // oldest stale first
- state.semesters[159].lastSuccess=recent;
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,160]);
-});
-test('manual refresh completes never-imported semesters before applying stale limits',async()=>{
- const {m}=await env(),info={current:161,semesters:[{id:159},{id:160},{id:161},{id:158}]};
- const state={semesters:{159:{lastSuccess:new Date().toISOString()}}};
- a.deepEqual(Array.from(m.selectTermIds(info,state,true)),[161,160,158]);
+ const info={current:161,semesters:[{id:161},{id:158},{id:158},{id:159},{id:160}]};
+ a.deepEqual(Array.from(m.selectTermIds(info,{},true)),[161,158,159,160]);
 });
 test('background rotates over all school-listed older semesters',async()=>{const {m}=await env();const state={cursor:0},info={current:161,semesters:[{id:158},{id:159},{id:160},{id:161}]};a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,158,159]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,160,158]);a.deepEqual(Array.from(m.selectTermIds(info,state,false)),[161,159,160]);});
 
