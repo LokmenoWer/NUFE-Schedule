@@ -4,6 +4,10 @@
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script } from 'scripting';
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, widgetReloadDate } from './widget-data';
 
+// Scripting's three transparent widget modes must never receive an opaque canvas.
+const OPAQUE_CANVAS=(Widget.isTransparentMode||Widget.isBlurMode||Widget.isTransparentBackground)
+  ?undefined:{light:'#FFFFFF',dark:'#FFFFFF'};
+
 const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
   dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
@@ -12,14 +16,14 @@ const COLORS={
   activeBg:'#D9E9FF'
 };
 
-function CourseCard({course,compact=false}){
+function CourseCard({course,compact=false,width}){
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
       padding={compact?6:8}
       background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
-      frame={{maxWidth:'infinity',alignment:'topLeading'}}>
+      frame={width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'}}>
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
       lineLimit={compact?4:5} foregroundStyle={fg}>{course.title}</Text>
     <Text font={compact?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
@@ -46,7 +50,7 @@ function DayColumn({day,width,compact=false,maxRows=1}){
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
     {window.courses.length?window.courses.map(c=>
-      <CourseCard key={c.id} course={c} compact={compact}/>):
+      <CourseCard key={c.id} course={c} compact={compact} width={width-4}/>):
       <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
     {window.hiddenAfter>0?
       <Text font={compact?9:10} foregroundStyle={COLORS.faint}>
@@ -71,10 +75,10 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-        <CourseCard course={focus.courses[0]} compact={compact}/>
+        <CourseCard course={focus.courses[0]} compact={compact} width={cardWidth}/>
       </VStack>
       <VStack alignment="center" spacing={4} frame={{width:cardWidth,alignment:'top'}}>
-        {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact}/>:null}
+        {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact} width={cardWidth}/>:null}
         {focus.hiddenAfter>0?<Text font={compact?9:10}
           foregroundStyle={COLORS.faint}>+{focus.hiddenAfter}节课</Text>:null}
       </VStack>
@@ -105,7 +109,7 @@ function RollingPanel({model,family}){
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
       return <VStack alignment="leading" spacing={0}
         padding={safeInset}
-        widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
+        widgetBackground={OPAQUE_CANVAS}
         frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
         <HStack alignment="top" spacing={gap}
           frame={{maxWidth:'infinity',alignment:'leading'}}>
@@ -128,7 +132,7 @@ function SmallPanel({model}){
   const next=classes.find(x=>x.status==='upcoming');
   const chosen=current||next||classes[classes.length-1];
   return <VStack alignment="leading" spacing={8} padding={20}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
+    widgetBackground={OPAQUE_CANVAS}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
     <Text font={18} fontWeight="bold" foregroundStyle={COLORS.dark}>
       今天
@@ -157,7 +161,7 @@ function EmptyPanel({kind='empty',code=''}) {
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={22}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
+    widgetBackground={OPAQUE_CANVAS}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
     <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE-Schedule</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>

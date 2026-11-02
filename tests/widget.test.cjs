@@ -248,7 +248,7 @@ test('course overflow stays chronological and reports remaining count',()=>{
 });
 test('widget has a pure white canvas and simple plus-N remaining classes',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.equal((ui.match(/widgetBackground=\{OPAQUE_CANVAS\}/g)||[]).length,3);
  a.match(ui,/\+\{window\.hiddenAfter\}节课/);
  a.doesNotMatch(ui,/自动定位|window\.position|#F7F9FD|#141E2C|#E8F0FF/);
 });
@@ -427,6 +427,19 @@ test('course card retains comfortable internal padding independent of widget out
  a.match(ui,/padding=\{compact\?6:8\}/);
  a.match(ui,/safeInset=medium\?9:12/);
 });
+test('widget removes the opaque canvas in all Scripting transparency modes',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/Widget\.isTransparentMode\|\|Widget\.isBlurMode\|\|Widget\.isTransparentBackground/);
+ a.match(ui,/\?undefined:\{light:'#FFFFFF',dark:'#FFFFFF'\}/);
+ a.equal((ui.match(/widgetBackground=\{OPAQUE_CANVAS\}/g)||[]).length,3);
+});
+test('all day card widths are explicit and centered within four equal slots',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/function CourseCard\(\{course,compact=false,width\}\)/);
+ a.match(ui,/width=\{width-4\}/);
+ a.match(ui,/width=\{cardWidth\}/);
+ a.match(ui,/frame=\{width\?\{width,alignment:'topLeading'\}/);
+});
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/safeInset=medium\?9:12/);
@@ -435,7 +448,7 @@ test('widget keeps white canvas, distinct colored cards and symmetric rounded-co
  a.match(ui,/doneBg:'#E5E7EB'/);
  a.match(ui,/nextBg:'#EFF4FA'/);
  a.match(ui,/activeBg:'#D9E9FF'/);
- a.equal((ui.match(/widgetBackground=\{\{light:'#FFFFFF',dark:'#FFFFFF'\}\}/g)||[]).length,3);
+ a.equal((ui.match(/widgetBackground=\{OPAQUE_CANVAS\}/g)||[]).length,3);
  a.doesNotMatch(ui,/测试 · 2025-2|历史课表预览|PREVIEW_TERM_MISSING/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
