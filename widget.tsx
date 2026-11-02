@@ -17,7 +17,7 @@ function CourseCard({course,compact=false}){
   const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
   return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
-      padding={compact?3:6}
+      padding={compact?6:8}
       background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
       frame={{maxWidth:'infinity',alignment:'topLeading'}}>
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}

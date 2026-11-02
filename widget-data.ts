@@ -244,15 +244,22 @@ export function buildHistoricalPreview(state,now=Date.now()){
     valid.push({e,start,end});
   }
   if(!valid.length)return null;
-  // Fixed teaching week 2: 2025-03-03 through 2025-03-09, Beijing time.
+  // Test the actual 2024-2025-2 week 2 courses, not today's weekday.
+  // Anchor its Monday to the device's today, so the busiest source day can
+  // exercise the two-card layout on any calendar date.
   const secondMonday=Date.UTC(2025,2,3)-BEIJING;
   const currentMonday=weekStartBeijing(at);
   const todayOffset=Math.floor((at-currentMonday)/DAY);
-  const from=secondMonday+(todayOffset-1)*DAY;
-  const to=from+4*DAY;
+  const todayStart=currentMonday+todayOffset*DAY;
+  const from=secondMonday-DAY,to=secondMonday+3*DAY;
   const selected=valid.filter(c=>c.start>=from&&c.start<to);
+  if(!selected.length)return null;
   const best={monday:secondMonday,selected};
-  const shift=currentMonday-secondMonday;
+  const shift=todayStart-secondMonday;
+  // At night, live clock time would collapse the preview to one finished card.
+  // Pin PREVIEW status to 09:00 Beijing to exercise current/next/remaining.
+  // Production/live schedule continues to use the real clock.
+  const previewAt=todayStart+9*HOUR;
   const events=best.selected.map(({e,start,end})=>({
     id:plainText(e.id,100),title:plainText(e.title,90),
     location:plainText(e.location,65),teacher:plainText(e.teacher,75),
@@ -262,7 +269,7 @@ export function buildHistoricalPreview(state,now=Date.now()){
   const model=buildRollingDays({
     lastCheck:state.lastCheck,
     semesters:{preview:{events}}
-  },at);
+  },previewAt);
   return {...model,previewTerm:src.term,
     previewSourceWeek:new Date(best.monday+BEIJING).toISOString().slice(0,10)};
 }

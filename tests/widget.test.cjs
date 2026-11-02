@@ -278,33 +278,50 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
-test('2024-2025-2 preview maps a rich historical week to current weekdays',()=>{
- const now=date('2026-11-03T06:10:00Z'); // Tuesday 14:10 Beijing
+test('2024-2025-2 week two preview anchors source Monday to today regardless of weekday or clock time',()=>{
+ const now=date('2026-11-03T14:13:00Z'); // Tuesday, 22:13 Beijing
  const original=[
-   ev('m','周一课程','2025-03-03T01:00:00Z','2025-03-03T02:20:00Z'),
-   ev('a','周二早课','2025-03-04T02:00:00Z','2025-03-04T03:30:00Z'),
-   ev('b','周二当前','2025-03-04T05:30:00Z','2025-03-04T06:55:00Z'),
-   ev('c','周二下一节','2025-03-04T07:10:00Z','2025-03-04T08:35:00Z'),
-   ev('d','周二剩余','2025-03-04T09:00:00Z','2025-03-04T10:00:00Z'),
-   ev('t','周三课程','2025-03-05T01:00:00Z','2025-03-05T02:30:00Z')
+   ev('m1','证券投资学','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
+   ev('m2','毛泽东思想和中国特色社会主义理论体系概论','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
+   ev('m3','Python大数据分析','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z'),
+   ev('m4','Python大数据分析','2025-03-03T07:15:00Z','2025-03-03T08:50:00Z'),
+   ev('t1','大学语文','2025-03-04T05:30:00Z','2025-03-04T07:05:00Z'),
+   ev('w1','中级财务会计','2025-03-05T02:15:00Z','2025-03-05T03:55:00Z'),
+   ev('wrong-week','不应混入其他周','2025-03-10T00:20:00Z','2025-03-10T02:00:00Z')
  ];
- original[2].teacher='高老师';
+ original[0].teacher='高老师';
  const state={lastCheck:'2026-11-02T06:00:00Z',
    preview:{term:'2024-2025-2',events:original},semesters:{live:{events:[]}}};
  const model=core.buildWidgetModel(state,now);
  a.equal(model.previewTerm,'2024-2025-2');
  a.equal(model.previewSourceWeek,'2025-03-03');
  a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天','后天']);
- a.equal(model.days[0].courses[0].title,'周一课程');
+ a.equal(model.days[0].courses.length,0);
  a.equal(model.days[1].courses.length,4);
- a.equal(model.days[1].courses[1].title,'周二当前');
- a.equal(model.days[1].courses[1].status,'current');
- a.equal(model.days[1].courses[1].teacher,'高老师');
- const selected=core.selectTodayPair(model.days[1]);
- a.deepEqual(Array.from(selected.courses,x=>x.title),['周二当前','周二下一节']);
- a.equal(selected.hiddenAfter,1);
- a.equal(model.days[2].courses[0].title,'周三课程');
+ a.equal(model.days[1].courses[0].title,'证券投资学');
+ a.equal(model.days[1].courses[0].status,'current');
+ a.equal(model.days[1].courses[0].teacher,'高老师');
+ const focus=core.selectTodayPair(model.days[1]);
+ a.deepEqual(Array.from(focus.courses,x=>x.title),['证券投资学','毛泽东思想和中国特色社会主义理论体系概论']);
+ a.equal(focus.hiddenAfter,2);
+ a.equal(model.days[2].courses[0].title,'大学语文');
+ a.equal(model.days[3].courses[0].title,'中级财务会计');
+ a.equal(model.courses.length,6);
+ a.equal(new Date(model.at+8*3600000).toISOString().slice(11,16),'09:00');
 });
+test('preview retains real weekday course ordering but does not use the late-night live clock',()=>{
+ const now=date('2026-11-02T14:13:00Z'); // Monday 22:13
+ const state={preview:{term:'2024-2025-2',events:[
+   ev('a','第一节','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
+   ev('b','第二节','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
+   ev('c','第三节','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z')
+ ]},semesters:{live:{events:[]}}};
+ const m=core.buildWidgetModel(state,now);
+ a.equal(m.days[1].courses.length,3);
+ a.deepEqual(Array.from(core.selectTodayPair(m.days[1]).courses,x=>x.title),['第一节','第二节']);
+ a.equal(core.selectTodayPair(m.days[1]).hiddenAfter,1);
+});
+
 test('a single today lesson returns a balanced day layout',()=>{
  const sample=core.selectTodayPair({today:true,courses:[
    {title:'只上一节',status:'current'}]});
@@ -394,6 +411,11 @@ test('widget renders the expanded today pair with a subtle historical-test marke
  a.match(ui,/expanded&&day\.today/);
  a.match(ui,/>测试<\/Text>/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
+});
+test('course card retains comfortable internal padding independent of widget outer inset',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/padding=\{compact\?6:8\}/);
+ a.match(ui,/safeInset=medium\?9:12/);
 });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
