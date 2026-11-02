@@ -287,8 +287,9 @@ export function selectTodayPair(day){
   if(courses.length<=1)return {courses,hiddenAfter:0};
   let at=courses.findIndex(e=>e.status==='current');
   if(at<0)at=courses.findIndex(e=>e.status==='upcoming');
-  if(at<0)at=Math.max(0,courses.length-2);
-  if(at===courses.length-1)at=Math.max(0,at-1);
+  // Finished classes never displace the current or next class.
+  // Once all lessons have ended, retain only the last lesson as completed.
+  if(at<0)at=courses.length-1;
   const shown=courses.slice(at,at+2);
   return {courses:shown,hiddenAfter:Math.max(0,courses.length-at-shown.length)};
 }

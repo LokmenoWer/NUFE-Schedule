@@ -222,7 +222,7 @@ test('widget UI uses four rolling columns with legible multi-line names and clas
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildWidgetModel\(snapshot\.state/);
  a.match(ui,/model\.days\.map\(day/);
- a.match(ui,/lineLimit=\{compact\?3:4\}/);
+ a.match(ui,/lineLimit=\{compact\?4:5\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
@@ -314,11 +314,28 @@ test('a single today lesson returns a balanced day layout',()=>{
  a.match(ui,/slots=expanded\?5:4/);
  a.match(ui,/todayWidth=expanded\?colWidth\*2\+extraGap:colWidth/);
 });
-test('when current class is last, today still renders two available classes',()=>{
+test('when current class is last, today shows only that current class',()=>{
  const c=['上完','正在上'].map((title,i)=>({title,status:i?'current':'done'}));
  const pick=core.selectTodayPair({today:true,courses:c});
- a.deepEqual(Array.from(pick.courses,x=>x.title),['上完','正在上']);
+ a.deepEqual(Array.from(pick.courses,x=>x.title),['正在上']);
  a.equal(pick.hiddenAfter,0);
+});
+test('today pair advances after each class ends and keeps upcoming classes ordered',()=>{
+ const classes=['第一节','第二节','第三节'].map(title=>({title,status:'upcoming'}));
+ const pick=()=>Array.from(core.selectTodayPair({courses:classes}).courses,c=>c.title);
+ a.deepEqual(pick(),['第一节','第二节']);
+ classes[0].status='current';
+ a.deepEqual(pick(),['第一节','第二节']);
+ classes[0].status='done';
+ a.deepEqual(pick(),['第二节','第三节']);
+ classes[1].status='current';
+ a.deepEqual(pick(),['第二节','第三节']);
+ classes[1].status='done';
+ a.deepEqual(pick(),['第三节']);
+ classes[2].status='current';
+ a.deepEqual(pick(),['第三节']);
+ classes[2].status='done';
+ a.deepEqual(pick(),['第三节']);
 });
 test('preview is isolated and never invents historical data',()=>{
  const now=date('2026-11-03T06:10:00Z');
@@ -362,12 +379,12 @@ test('widget renders the expanded today pair with a subtle historical-test marke
  a.match(ui,/focus\.hiddenAfter>0/);
  a.match(ui,/\+\{focus\.hiddenAfter\}节课/);
  a.match(ui,/expanded&&day\.today/);
- a.match(ui,/2024-2025-2 测试/);
+ a.match(ui,/>测试<\/Text>/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/safeInset=medium\?18:22/);
+ a.match(ui,/safeInset=medium\?4:8/);
  a.match(ui,/padding=\{safeInset\}/);
  a.match(ui,/width-2\*safeInset/);
  a.match(ui,/doneBg:'#E5E7EB'/);
