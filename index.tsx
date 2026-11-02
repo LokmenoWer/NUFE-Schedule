@@ -1172,12 +1172,8 @@ async function createDedicatedCalendar(){
 }
 // An empty list means the script cannot read calendars; never create one in that state.
 // A pending transaction belongs to the old calendar, so it can never move to a new one.
-async function offerDedicatedCalendar(state){
-  if(typeof HostScript.requestAccess==='function'){try{await HostScript.requestAccess(['calendar']);}catch(_){}}
-  const all=await visibleCalendars();
+async function offerDedicatedCalendar(state,all){
   assert(all.length,'CALENDAR_PERMISSION');
-  const existing=all.find(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-  if(existing)return existing;
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
   const bound=!!state.calendarId&&Object.values(state.semesters||{}).some(t=>(t.events||[]).length);
   if(!await confirm('新建「课表」日历',
@@ -1186,18 +1182,30 @@ async function offerDedicatedCalendar(state){
      '\n此日历只放可替换的课表，不要混放私人日程。'))fail('CANCELLED');
   return await createDedicatedCalendar();
 }
+// Allow the old title during migration, but prefer the new name.
+function dedicatedCandidates(all){
+  const candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
+  return candidates.length?candidates:all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
+}
 async function pickCalendar(state,store,force=false){
-  const all=await visibleCalendars();
+  let all=await visibleCalendars();
   const exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
   if(exact&&!force)return await alignBoundCalendarName(exact,state,store);
   // A changed calendar ID is NEVER silently adopted in background automation.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  // Allow the old title during migration, but prefer the new name.
-  let candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-  if(!candidates.length)candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
+  let candidates=dedicatedCandidates(all);
+  // Calendars revealed by the access request are not new: they take the same
+  // confirmation and rebind checks as any other existing calendar.
+  if(!candidates.length&&typeof HostScript.requestAccess==='function'){
+    try{await HostScript.requestAccess(['calendar']);}catch(_){}
+    all=await visibleCalendars();
+    const revealed=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
+    if(revealed&&!force)return await alignBoundCalendarName(revealed,state,store);
+    candidates=dedicatedCandidates(all);
+  }
   let picked,created=false;
   if(!candidates.length){
-    picked=await offerDedicatedCalendar(state);created=true;
+    picked=await offerDedicatedCalendar(state,all);created=true;
   }else if(candidates.length===1){
     picked=candidates[0];
     if(!await confirm('绑定目标日历',

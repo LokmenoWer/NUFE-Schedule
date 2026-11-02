@@ -236,9 +236,23 @@ test('empty calendar list reports permission and never creates a calendar',async
  await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_PERMISSION'));
  a.equal(asked.length,0);a.deepEqual(h.created,[]);
 });
-test('calendar access is requested before deciding that the dedicated calendar is missing',async()=>{
- const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);h.list.length=0;
- e.sandbox.__sdk.Script.requestAccess=async apis=>{a.deepEqual([...apis],['calendar']);h.list.push(e.other,e.calendar);return apis;};
+const revealOnAccess=(e,h,...cals)=>{h.list.length=0;e.sandbox.__sdk.Script.requestAccess=async apis=>{a.deepEqual([...apis],['calendar']);h.list.push(e.other,...cals);return apis;};};
+test('calendar revealed by the access request still needs binding confirmation',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);
+ a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
+ a.equal(asked.length,1);a.match(asked[0].message,/专用课表日历模式/);a.deepEqual(h.created,[]);
+ const f=await env({hostEnv:'index'}),g=missingCalendar(f);setConfirm(f,false);revealOnAccess(f,g,f.calendar);
+ await a.rejects(f.m.pickCalendar(f.state,f.store),code('CANCELLED'));a.equal(f.state.calendarId,null);a.deepEqual(g.created,[]);
+});
+test('calendar revealed by the access request still passes rebind checks',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e,{lost:true});setConfirm(e,true);revealOnAccess(e,h,e.calendar);
+ e.baseline([lesson()]);e.state.calendarId='calendar-gone';
+ await a.rejects(e.m.pickCalendar(e.state,e.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(e.state.calendarId,'calendar-gone');
+ const f=await env({hostEnv:'index'}),g=missingCalendar(f,{lost:true});setConfirm(f,true);revealOnAccess(f,g,f.calendar);f.state.tx=tx([],[]);
+ await a.rejects(f.m.pickCalendar(f.state,f.store),code('CALENDAR_REBIND_UNSAFE'));a.equal(f.state.calendarId,'calendar-gone');
+});
+test('bound calendar revealed by the access request is reused without prompting',async()=>{
+ const e=await env({hostEnv:'index'}),h=missingCalendar(e),asked=setConfirm(e,true);revealOnAccess(e,h,e.calendar);e.state.calendarId=e.calendar.identifier;
  a.equal((await e.m.pickCalendar(e.state,e.store)).identifier,e.calendar.identifier);
  a.equal(asked.length,0);a.deepEqual(h.created,[]);
 });
