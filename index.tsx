@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures.
+// Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -70,7 +70,7 @@ const CloudKeychain={
 };
 const UUID=hostAPI('UUID');
 const Timer={schedule:(ms,repeats,callback)=>{const id=repeats?setInterval(callback,ms):setTimeout(callback,ms);return {invalidate:()=>repeats?clearInterval(id):clearTimeout(id)};}};
-const Calendar={forEvents:()=>HostCalendar.forEvents(),presentPicker:multiple=>HostCalendar.presentChooser(multiple)};
+const Calendar={forEvents:()=>HostCalendar.forEvents(),presentPicker:multiple=>HostCalendar.presentChooser(multiple),create:options=>HostCalendar.create(options)};
 function CalendarEvent(){return new HostEvent();}
 CalendarEvent.between=(from,to,calendars)=>HostEvent.getAll(from,to,calendars);
 class Alert{
@@ -1119,7 +1119,8 @@ const ERROR_GUIDE={
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
   CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','在「账号与日历设置」选择「重新绑定课表日历」，不要删除原日历。'],
-  CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」。'],
+  CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
+  CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
   CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
   BUSY:['同步锁显示可能有另一项同步正在进行，也可能是上次异常退出留下的锁。','避免同时运行两个任务；异常退出留下的正常锁在 20 分钟后会自动过期。'],
   LOCK_LOST:['运行过程中同步锁失效，程序为防止重复写入主动停止。','检查是否存在多个并发任务；停止自动化后稍候重新同步。'],
@@ -1202,18 +1203,63 @@ async function alignBoundCalendarName(calendar,state,store){
   if(state.calendarTitle!==current.title){state.calendarTitle=current.title;store.write(state);}
   return current;
 }
+// Read back instead of trusting create(): a failed save must not yield a second calendar on retry.
+async function createDedicatedCalendar(){
+  for(const sourceType of ['calDAV','local']){
+    let created;
+    try{
+      created=await Calendar.create({title:'课表',entityType:'event',sourceType});
+    }catch(_){continue;}
+    // Once create() returned a calendar, an uncertain save/readback must
+    // NOT trigger another creation in a different account.
+    try{await created.save();}catch(_){}
+    const found=(await visibleCalendars()).find(c=>
+      liveCalendar(c)&&created.identifier&&c.identifier===created.identifier&&
+      String(c.title||'').trim()==='课表');
+    if(found)return found;
+    fail('CALENDAR_CREATE_FAILED');
+  }
+  fail('CALENDAR_CREATE_FAILED');
+}
+// An empty list means the script cannot read calendars; never create one in that state.
+// A pending transaction belongs to the old calendar, so it can never move to a new one.
+async function offerDedicatedCalendar(state,store,all){
+  assert(all.length,'CALENDAR_PERMISSION');
+  assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
+  const bound=!!state.calendarId&&Object.values(state.semesters||{}).some(t=>(t.events||[]).length);
+  if(!await confirm('新建「课表」日历',
+     '没有找到可写入的「课表」日历。是否新建一个专用日历并绑定？不会改动其他日历。'+
+     (bound?'\n之前同步使用的日历当前不可见。请先确认它没有被隐藏或关闭 iCloud 同步；如果旧日历之后恢复，其中的课程会与新日历重复。':'')+
+     '\n此日历只放可替换的课表，不要混放私人日程。'))fail('CANCELLED');
+  // The dialog can outlast this run's ownership; a superseded run must not create a calendar.
+  store.check();
+  return await createDedicatedCalendar();
+}
+// Allow the old title during migration, but prefer the new name.
+function dedicatedCandidates(all){
+  const candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
+  return candidates.length?candidates:all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
+}
 async function pickCalendar(state,store,force=false){
-  const all=await visibleCalendars();
+  let all=await visibleCalendars();
   const exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
   if(exact&&!force)return await alignBoundCalendarName(exact,state,store);
   // A changed calendar ID is NEVER silently adopted in background automation.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  // Allow the old title during migration, but prefer the new name.
-  let candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-  if(!candidates.length)candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
-  assert(candidates.length,'CALENDAR_NOT_VISIBLE');
-  let picked;
-  if(candidates.length===1){
+  let candidates=dedicatedCandidates(all);
+  // Calendars revealed by the access request are not new: they take the same
+  // confirmation and rebind checks as any other existing calendar.
+  if(!candidates.length&&typeof HostScript.requestAccess==='function'){
+    try{await HostScript.requestAccess(['calendar']);}catch(_){}
+    all=await visibleCalendars();
+    const revealed=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
+    if(revealed&&!force)return await alignBoundCalendarName(revealed,state,store);
+    candidates=dedicatedCandidates(all);
+  }
+  let picked,created=false;
+  if(!candidates.length){
+    picked=await offerDedicatedCalendar(state,store,all);created=true;
+  }else if(candidates.length===1){
     picked=candidates[0];
     if(!await confirm('绑定目标日历',
        '检测到唯一一个可编辑的「课表」日历（或尚未更名的旧日历）。'+
@@ -1226,7 +1272,7 @@ async function pickCalendar(state,store,force=false){
     assert(picked&&candidates.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
     if(!await confirm('确认日历','已选择「'+picked.title+'」。确认这是原来绑定的课表专用日历？'))fail('CANCELLED');
   }
-  if(state.calendarId&&state.calendarId!==picked.identifier){
+  if(!created&&state.calendarId&&state.calendarId!==picked.identifier){
     // Prevent continuing a partially applied transaction in a different calendar.
     assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
     assert(await containsManagedEvent(picked,state),'CALENDAR_REBIND_UNSAFE');
