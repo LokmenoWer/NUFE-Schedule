@@ -215,9 +215,9 @@ function credentialStorageStatus(){
     local=Keychain.contains(CRED_KEY);
     if(cloud)credentialRecord(CloudKeychain.get(CLOUD_CRED_KEY));
     if(local)credentialRecord(Keychain.get(CRED_KEY));
-  }catch(_){return '凭据不可读取或数据异常（未验证云同步）';}
-  if(cloud&&local)return '本机已读回 iCloud 可同步凭据，同时存在旧本机凭据（请核对迁移情况）';
-  if(cloud)return '本机已读回 iCloud 可同步凭据（其他设备尚未核验）';
+  }catch(_){return '凭据不可读取或数据异常';}
+  if(cloud&&local)return 'iCloud 可同步凭据已保存；检测到旧本机凭据，请检查迁移';
+  if(cloud)return 'iCloud 可同步凭据已保存';
   if(local)return '仅检测到本机旧凭据，尚未迁移至 iCloud';
   return '未保存账号密码';
 }
@@ -1471,7 +1471,7 @@ async function inspectEnvironment(state,store){
     const status=credentialStorageStatus();
     if(/不可读取|异常/.test(status))put('自动登录凭据','注意','钥匙串暂不可读取或格式异常');
     else if(status==='未保存账号密码')put('自动登录凭据','待确认','未保存；仍可前台手动登录');
-    else put('自动登录凭据','正常','本机可读回；未验证其他设备同步或密码有效性');
+    else put('自动登录凭据','正常','本机凭据读取正常');
   }catch(_){put('自动登录凭据','待确认','无法检查本机钥匙串');}
 
   try{
@@ -1857,7 +1857,7 @@ async function manageSavedCredentials(state,store){
     state.credentialCloudStatus='synced';
     // After user explicitly updates credentials, allow the next timed check.
     state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
-    await notice('已启用自动重新登录','本机已写入并读回 iCloud 可同步凭据。是否已同步到其他设备仍需核验。Cookie 保存在本机；学校账号密码尚未在此次保存操作中验证。');
+    await notice('已保存自动登录凭据','凭据已保存到 iCloud 可同步钥匙串。Cookie 仍仅保存在本机。');
   }else if(present&&choice===1){
     if(!await confirm('确认删除同步凭据','将从 iCloud 钥匙串删除登录凭据，其他已同步设备也会失去该副本。现有课表与各设备本机 Cookie 不受影响。'))return;
     removeSavedCredentials();state.credentialCloudStatus=null;store.write(state);

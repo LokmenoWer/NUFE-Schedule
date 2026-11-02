@@ -723,21 +723,29 @@ test('credential status identifies legacy-only and synchronized item read-back',
  e.keys.set('NUFE.Local.v1.saved-login',legacy);
  a.match(e.m.credentialStorageStatus(),/仅检测到本机旧凭据/);
  e.m.saveCredentials('school-id','fake-password');
- a.match(e.m.credentialStorageStatus(),/本机已读回 iCloud 可同步凭据/);
- a.match(e.m.credentialStorageStatus(),/其他设备尚未核验/);
+ a.equal(e.m.credentialStorageStatus(),'iCloud 可同步凭据已保存');
+ a.doesNotMatch(e.m.credentialStorageStatus(),/其他设备|未核验/);
  a.doesNotMatch(e.m.credentialStorageStatus(),/fake-password|school-id/);
+});
+test('Keychain diagnostics report only the local readable state, not cross-device verification',async()=>{
+ const e=await env();
+ e.m.saveCredentials('student','secret');
+ const report=e.m.environmentCheckText(await e.m.inspectEnvironment(e.state,e.store),e.state);
+ a.match(report,/自动登录凭据：本机凭据读取正常/);
+ a.doesNotMatch(report,/其他设备|云同步.*核验/);
+ a.doesNotMatch(report,/secret|student/);
 });
 test('credential status cannot claim success for invalid stored JSON',async()=>{
  const e=await env();
  e.keys.set('NUFE.Schedule.v1.icloud-credentials','{broken');
  a.match(e.m.credentialStorageStatus(),/数据异常/);
- a.doesNotMatch(e.m.credentialStorageStatus(),/本机已读回 iCloud 可同步凭据/);
+ a.doesNotMatch(e.m.credentialStorageStatus(),/iCloud 可同步凭据已保存/);
 });
 test('credential status surfaces dual-key migration instead of hiding it',async()=>{
  const e=await env(),r=JSON.stringify({version:1,username:'test',password:'placeholder'});
  e.keys.set('NUFE.Local.v1.saved-login',r);
  e.keys.set('NUFE.Schedule.v1.icloud-credentials',r);
- a.match(e.m.credentialStorageStatus(),/同时存在旧本机凭据/);
+ a.match(e.m.credentialStorageStatus(),/旧本机凭据，请检查迁移/);
 });
 
 
