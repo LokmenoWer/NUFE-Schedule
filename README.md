@@ -58,9 +58,9 @@
 如需手动更新已导入的远程项目：
 
 1. 在 Scripting 主界面找到 NUFE-Schedule，点击项目卡片右上角的「···」菜单。
-2. 选择「刷新脚本」，由 Scripting 重新获取项目的远程资源。
+2. 展开「远程资源」，选择「立即更新」，由 Scripting 重新获取项目的远程安装包。
 3. 更新完成后，点击 NUFE-Schedule 打开项目，并选择「立即刷新」检查课表同步是否正常。
 
-   <a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="Scripting 项目菜单中的「刷新脚本」选项" width="330"></a>
+   <a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="Scripting 项目菜单「远程资源」中的「立即更新」选项" width="330"></a>
 
 远程资源仍使用上方的固定安装地址。更新时请保留现有项目与「课表」日历，避免重复导入或丢失原有配置。涉及账号、日历或后台权限的异常，可在「运行状态」中查看提示。
