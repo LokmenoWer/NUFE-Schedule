@@ -9,7 +9,7 @@
 
 ## 发布机制与兼容性
 
-正式固定下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。GitHub Release 必须关联 Tag，因此只在首次发布时创建一次内部固定标签 `stable`，页面标题始终是 `NUFE-Schedule`；以后覆盖同一个 ZIP 附件。仓库根目录的 `NUFE-Schedule.zip` 只保留给旧 Raw 链接兼容，不参与新安装包自动发布，**可能过时**；新安装及更新请统一使用上面的 Release 下载地址。首次发布与后续覆盖都必须先通过完整测试；测试失败则不替换现有 Release 资产。 发行页面的项目说明统一维护在 `docs/release-notes.md`，自动发布过程会同步更新该说明，以保证公开内容与项目功能保持一致。
+唯一安装包下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。仓库根目录不再跟踪 ZIP，旧 Raw 路径不再维护，请统一从 Release 安装和更新。每次 `main` 成功通过测试并发布 ZIP 后，将固定 `stable` 标签更新到该次主分支提交，使 Release 页面自动生成的 Source code 压缩包与成功发布的代码版本保持一致；未通过测试时不更新标签或安装包。Release 标题始终为 `NUFE-Schedule`，发行说明统一维护在 `docs/release-notes.md`。为防止并发发布回退，过时的工作流运行会跳过发布。
 
 ## 技术评估与后续改进方向
 

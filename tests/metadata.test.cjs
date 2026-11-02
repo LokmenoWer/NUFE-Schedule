@@ -52,3 +52,15 @@ test('error guidance does not direct users to removed menu actions',()=>{
   assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课表日历」/);
   assert.match(guide,/账号与日历设置 → 课表日历/);
 });
+
+test('only the Release archive is distributed',()=>{
+  assert.equal(fs.existsSync(path.join(root,'NUFE-Schedule.zip')),false,
+    'stale root ZIP should not be tracked or distributed');
+  assert.match(read('.gitignore'),/^\/NUFE-Schedule\.zip$/m);
+  const workflow=read('.github/workflows/release.yml');
+  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
+  assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
+  assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
+  assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
+  assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
+});

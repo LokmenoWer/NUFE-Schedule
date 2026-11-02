@@ -25,14 +25,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Only the actual main branch may publish or move the stable tag.
+          test "$GITHUB_REF" = "refs/heads/main"
+          current_main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            echo "Skipping superseded publish: $GITHUB_SHA; main is $current_main"
+            exit 0
+          fi
+
           release_tag="stable"
           archive="dist/NUFE-Schedule.zip"
           if gh release view "$release_tag" >/dev/null 2>&1; then
             gh release upload "$release_tag" "$archive" --clobber
-            gh release edit "$release_tag" --title "NUFE-Schedule" --notes-file docs/release-notes.md
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "NUFE-Schedule" --notes-file docs/release-notes.md
           else
             gh release create "$release_tag" "$archive" \
               --target "$GITHUB_SHA" \
               --title "NUFE-Schedule" \
               --notes-file docs/release-notes.md
           fi
+
+          # Advance stable only after tests, ZIP creation and release upload succeed.
+          # GitHub's automatic "Source code" archives resolve the tag commit.
+          stable_sha=$(gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$release_tag" \
+            -f sha="$GITHUB_SHA" -F force=true --jq '.object.sha')
+          test "$stable_sha" = "$GITHUB_SHA"
