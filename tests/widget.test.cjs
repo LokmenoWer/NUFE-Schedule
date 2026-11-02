@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,weekStartBeijing,buildWeek,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -125,6 +125,38 @@ test('widget diagnoses each cache failure stage without exposing any file conten
  a.equal(out.kind,'empty');a.equal(out.code,'NO_CACHE_DIR');
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/诊断：\{code\|\|'UNKNOWN'\}/);
+});
+test('private widget Storage mirror works even when FileManager has no App Group path',()=>{
+ const mirror={version:1,lastCheck:'2026-11-02T18:00:00Z',events:[
+   ev('a','今天上课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')
+ ]};
+ const files={appGroupDocumentsDirectory:undefined};
+ const storage={get:(key,opts)=>{a.equal(key,'NUFE.Schedule.Widget.Courses.v1');a.equal(opts,undefined);return mirror;}};
+ const result=core.loadBestWidgetState(files,storage);
+ a.equal(result.kind,'ready');
+ a.equal(result.state.semesters.widget.events[0].title,'今天上课');
+ const model=core.buildWeek(result.state,date('2026-11-03T06:10:00Z'));
+ a.equal(model.days[1].courses[0].status,'current');
+});
+test('missing private mirror explains opening the main project once',()=>{
+ const result=core.loadBestWidgetState({appGroupDocumentsDirectory:undefined},{get:()=>null});
+ a.equal(result.kind,'empty');a.equal(result.code,'OPEN_MAIN_ONCE');
+});
+test('broken Storage mirror never discloses data and can fall back to verified files',()=>{
+ const valid={version:1,lastCheck:'2026-11-02T18:00:00Z',events:[]};
+ a.equal(core.readWidgetMirror({get:()=>({events:[{password:'SECRET'}],version:1,lastCheck:valid.lastCheck})}).code,'STORAGE_SCHEMA');
+ a.equal(core.readWidgetMirror({get:()=>{throw Error('SECRET');}}).code,'STORAGE_READ');
+ const dir='/group/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const files={
+   appGroupDocumentsDirectory:'/group',existsSync:path=>path===dir,
+   readDirectorySync:()=>['state-0000000001.json'],
+   readAsStringSync:()=>JSON.stringify(make([
+     ev('a','回退课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')
+   ]))
+ };
+ const fallback=core.loadBestWidgetState(files,{get:()=>null});
+ a.equal(fallback.kind,'ready');
+ a.equal(fallback.state.semesters['161'].events[0].title,'回退课程');
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});

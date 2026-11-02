@@ -2,7 +2,7 @@
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, Script } from 'scripting';
-import { loadWidgetState, buildWeek, widgetReloadDate, formatWeekLabel } from './widget-data';
+import { loadBestWidgetState, buildWeek, widgetReloadDate, formatWeekLabel } from './widget-data';
 
 const COLORS={
   dark:{light:'#203451',dark:'#EAF2FF'},
@@ -119,7 +119,8 @@ function SmallPanel({model}){
 function EmptyPanel({kind='empty',code=''}) {
   const failure=kind==='invalid';
   const label=failure?'缓存读取失败':'尚无课表缓存';
-  const guidance=failure?'请更新后重新打开组件；如仍失败，请反馈下方代码':
+  const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
+    failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 NUFE-Schedule 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={16}
     widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
@@ -131,7 +132,7 @@ function EmptyPanel({kind='empty',code=''}) {
   </VStack>;
 }
 
-const snapshot=loadWidgetState(FileManager);
+const snapshot=loadBestWidgetState(FileManager,typeof Storage!=='undefined'?Storage:null);
 if(snapshot.kind!=='ready'){
   Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code}/>,
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
@@ -143,3 +144,6 @@ if(snapshot.kind!=='ready'){
     :<WeeklyPanel model={model} family={family}/>,
     {policy:'after',date:widgetReloadDate(model)});
 }
+
+// Required by the Scripting widget lifecycle after presenting the view.
+Script.exit();

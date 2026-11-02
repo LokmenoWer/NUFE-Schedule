@@ -9,6 +9,43 @@ const NAMES = ['一','二','三','四','五','六','日'];
 // Read the shared snapshots exactly as the sync engine does. Avoid a hard
 // dependency on statSync: file metadata isn't necessary to parse our own JSON,
 // and unsupported/failed metadata calls used to mask readable caches.
+const MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
+// Storage is private to the NUFE-Schedule project (no shared:true). The
+// widget can use it even when the extension does not expose a FileManager
+// App Group root. The legacy file reader is a fallback for existing installs.
+export function readWidgetMirror(storage){
+  if(!storage||typeof storage.get!=='function')return {kind:'empty',code:'STORAGE_UNAVAILABLE'};
+  let obj;
+  try{obj=storage.get(MIRROR_KEY);}
+  catch(_){return {kind:'invalid',code:'STORAGE_READ'};}
+  if(obj==null)return {kind:'empty',code:'STORAGE_EMPTY'};
+  if(!obj||obj.version!==1||!Array.isArray(obj.events)||
+     obj.events.length>400||typeof obj.lastCheck!=='string')
+    return {kind:'invalid',code:'STORAGE_SCHEMA'};
+  const events=[];
+  for(const e of obj.events){
+    if(!e||typeof e.title!=='string'||typeof e.start!=='string'||
+       typeof e.end!=='string'||typeof e.location!=='string')
+      return {kind:'invalid',code:'STORAGE_SCHEMA'};
+    events.push(e);
+  }
+  return {kind:'ready',state:{lastCheck:obj.lastCheck,
+    semesters:{widget:{events}}}};
+}
+export function loadBestWidgetState(files,storage){
+  const mirror=readWidgetMirror(storage);
+  if(mirror.kind==='ready')return mirror;
+  // Access App Group only as an optional fallback; never fabricate its path.
+  const file=loadWidgetState(files);
+  if(file.kind==='ready')return file;
+  if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_EMPTY')
+    return {kind:'empty',code:'OPEN_MAIN_ONCE'};
+  if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_UNAVAILABLE')
+    return {kind:'invalid',code:'STORAGE_UNAVAILABLE'};
+  if(mirror.kind==='invalid')return mirror;
+  return file;
+}
+
 export function loadWidgetState(files) {
   let root;
   try {

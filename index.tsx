@@ -24,6 +24,7 @@ const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
 const HostCalendar=hostAPI('Calendar')||{},HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog')||{};
 const HostNotification=hostAPI('Notification')||{},hostFetch=hostAPI('fetch');
+const HostStorage=hostAPI('Storage');
 const __query=HostScript.queryParameters||{};
 const __intent=hostAPI('Intent');
 let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')__intentText=String(p.value||'');}catch(_){}
@@ -1066,6 +1067,42 @@ async function reminders(state) {
   const pending=await Notification.allPending();const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
   for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pending.find(n=>n.identifier===id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
 }
+// Minimal, private same-project cache for widget.tsx. In some Scripting
+// widget extensions the FileManager App Group path is unavailable even though
+// the main script can access its files. Storage has a per-script domain that
+// survives separate index/widget executions, so never use shared:true here.
+// No account, student ID, cookies, keys or calendar identifiers are copied.
+const WIDGET_CACHE_KEY='NUFE.Schedule.Widget.Courses.v1';
+function widgetCacheProjection(state,now=Date.now()){
+  if(!state||!state.semesters||typeof state.semesters!=='object')return null;
+  if(state.tx||!state.lastCheck)return null;
+  const earliest=now-8*DAY,latest=now+70*DAY,courses=[];
+  for(const term of Object.values(state.semesters)){
+    if(!term||!Array.isArray(term.events))continue;
+    for(const e of term.events){
+      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
+      const start=Date.parse(e.start),end=Date.parse(e.end);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
+         end<earliest||start>latest)continue;
+      courses.push({
+        id:String(e.id||'').slice(0,100),
+        title:e.title.slice(0,90),
+        location:String(e.location||'').slice(0,65),
+        start:e.start,end:e.end
+      });
+      if(courses.length>400)return null; // Never silently truncate classes.
+    }
+  }
+  return {version:1,lastCheck:state.lastCheck,events:courses};
+}
+function publishWidgetCache(state,now=Date.now()){
+  const storage=HostStorage;
+  if(!storage||typeof storage.set!=='function')return false;
+  try{
+    const payload=widgetCacheProjection(state,now);
+    return !!(payload&&storage.set(WIDGET_CACHE_KEY,payload)===true);
+  }catch(_){return false;} // Must never fail the verified calendar sync.
+}
 function localDateTime(iso){return new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,16).replace('T',' ');}
 function ics(events,stamp=new Date().toISOString()) {
   const esc=s=>String(s).replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/;/g,'\\;').replace(/,/g,'\\,');
@@ -1923,6 +1960,8 @@ async function run() {
   try {
     if(interactive&&!firstSetup){
       state=store.read();
+      // Heal the widget cache from existing verified state even without network.
+      publishWidgetCache(state);
       const menu=new Alert();menu.title='NUFE 课表';
       menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       ['立即刷新','自动登录凭据','运行状态'].forEach(x=>menu.addAction(x));menu.addCancelAction('关闭');
@@ -1973,7 +2012,9 @@ async function run() {
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
     await synchronize(state,store,calendar,interactive,interactive,progress);
-    // WidgetKit reads the same verified App Group snapshot. Reload requests
+    publishWidgetCache(state);
+    // WidgetKit prefers the lightweight Storage mirror and may also use the
+    // original App Group snapshot if its path is exposed in this context. Reload requests
     // are best effort and must never turn a successful sync into a failure.
     try{const widgets=hostAPI('Widget');if(widgets){
       if(typeof widgets.reloadUserWidgets==='function')widgets.reloadUserWidgets();
@@ -2012,7 +2053,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
 else await run();
 
 /*
