@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,selectVisibleCourses,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -222,12 +222,58 @@ test('widget UI uses four rolling columns with legible multi-line names and clas
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/buildRollingDays\(snapshot\.state/);
  a.match(ui,/model\.days\.map\(day/);
- a.match(ui,/lineLimit=\{compact\?4:6\}/);
+ a.match(ui,/lineLimit=\{compact\?3:4\}/);
  a.match(ui,/day\.weekday/);
  a.match(ui,/day\.dateLabel/);
  a.match(ui,/course\.location/);
  a.doesNotMatch(ui,/family==='systemLarge'\?9/);
  a.doesNotMatch(ui,/WeeklyPanel/);
+});
+test('auto-focus prefers current then upcoming class without losing previous courses from memory',()=>{
+ const mk=(status,title)=>({status,title});
+ const classes=[mk('done','早课'),mk('done','第二节'),mk('current','第三节'),mk('upcoming','第四节')];
+ let day={index:1,today:true,courses:classes};
+ let pick=core.selectVisibleCourses(day,1);
+ a.deepEqual(Array.from(pick.courses,c=>c.title),['第三节']);
+ a.equal(pick.hiddenBefore,2);a.equal(pick.hiddenAfter,1);
+ pick=core.selectVisibleCourses(day,2);
+ a.deepEqual(Array.from(pick.courses,c=>c.title),['第三节','第四节']);
+ day={...day,courses:classes.map((c,i)=>({...c,status:i<3?'done':'upcoming'}))};
+ a.equal(core.selectVisibleCourses(day,1).courses[0].title,'第四节');
+ day={...day,courses:classes.map(c=>({...c,status:'done'}))};
+ a.equal(core.selectVisibleCourses(day,1).courses[0].title,'第四节');
+});
+test('yesterday focuses on last classes while future days start at first class',()=>{
+ const courses=Array.from({length:4},(_,i)=>({title:String(i+1),status:'done'}));
+ a.deepEqual(Array.from(core.selectVisibleCourses({index:0,today:false,courses},2).courses,c=>c.title),['3','4']);
+ a.deepEqual(Array.from(core.selectVisibleCourses({index:2,today:false,courses},2).courses,c=>c.title),['1','2']);
+ a.equal(core.selectVisibleCourses({index:1,today:true,courses:[]},1).total,0);
+});
+test('teacher names appear from new mirror or older semester cache',()=>{
+ const base=make([ev('a','新课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
+ base.semesters['161'].events[0].teachers=['张老师','李老师'];
+ let m=core.buildRollingDays(base,date('2026-11-03T06:10:00Z'));
+ a.equal(m.days[1].courses[0].teacher,'张老师、李老师');
+ const cached={version:1,lastCheck:'2026-11-03T06:00:00Z',events:[{
+   id:'t',title:'统计学',location:'A101',teacher:'高老师',
+   start:'2026-11-03T05:30:00Z',end:'2026-11-03T06:55:00Z'
+ }]};
+ const read=core.loadBestWidgetState({appGroupDocumentsDirectory:undefined},{get:()=>cached});
+ a.equal(read.kind,'ready');
+ m=core.buildRollingDays(read.state,date('2026-11-03T06:10:00Z'));
+ a.equal(m.days[1].courses[0].teacher,'高老师');
+ const legacy={...cached,events:[Object.fromEntries(Object.entries(cached.events[0]).filter(([k])=>k!=='teacher'))]};
+ a.equal(core.readWidgetMirror({get:()=>legacy}).kind,'ready');
+});
+test('renderer measures actual widget geometry, omits overflow-prone footer and renders teacher',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.match(ui,/GeometryReader/);
+ a.match(ui,/proxy\.size\.width/);
+ a.match(ui,/proxy\.size\.height/);
+ a.match(ui,/selectVisibleCourses\(day,maxRows\)/);
+ a.match(ui,/course\.teacher/);
+ a.doesNotMatch(ui,/Widget\.displaySize/);
+ a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
 test('missing cache is an honest empty state; widget never writes, authenticates or reads Keychain',()=>{
   const result=core.loadWidgetState({appGroupDocumentsDirectory:'/group',existsSync:()=>false});

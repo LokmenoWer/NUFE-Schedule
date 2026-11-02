@@ -42,7 +42,8 @@ test('widget mirror publishes only non-sensitive verified course fields',async()
  a.equal(e.m.publishWidgetCache(e.state,now),true);
  const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
  a.equal(saved.version,1);a.equal(saved.events.length,1);
- a.deepEqual(Object.keys(saved.events[0]).sort(),['end','id','location','start','title']);
+ a.deepEqual(Object.keys(saved.events[0]).sort(),['end','id','location','start','teacher','title']);
+ a.equal(saved.events[0].teacher,'张老师');
  a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
 });
 test('widget mirror blocks unverified transactions, filters old semesters, and keeps calendar sync independent',async()=>{

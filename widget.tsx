@@ -1,8 +1,8 @@
 // @ts-nocheck
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
-import { FileManager, Widget, Text, VStack, HStack, Spacer, Script } from 'scripting';
-import { loadBestWidgetState, buildRollingDays, widgetReloadDate, formatWeekLabel } from './widget-data';
+import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script } from 'scripting';
+import { loadBestWidgetState, buildRollingDays, selectVisibleCourses, widgetReloadDate } from './widget-data';
 
 const COLORS={
   dark:{light:'#203451',dark:'#EAF2FF'},
@@ -20,74 +20,78 @@ function CourseCard({course,compact=false}){
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?COLORS.blue:COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
-  return <VStack key={course.id} alignment="leading" spacing={compact?3:4}
-      padding={compact?6:9}
-      background={{style:bg,shape:{type:'rect',cornerRadius:10}}}
-      frame={{maxWidth:'infinity',minHeight:compact?75:90,alignment:'topLeading'}}>
-    {current?<Text font={compact?9:10} fontWeight="bold"
-      foregroundStyle={COLORS.blue}>● 上课中</Text>:null}
-    <Text font={compact?11:12} fontWeight={current?'bold':'semibold'}
-      lineLimit={compact?4:6} foregroundStyle={fg}>{course.title}</Text>
-    <Text font={compact?9:10} foregroundStyle={done?COLORS.muted:COLORS.faint}
+  return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
+      padding={compact?5:7}
+      background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
+      frame={{maxWidth:'infinity',alignment:'topLeading'}}>
+    {current?<Text font={9} fontWeight="bold" foregroundStyle={COLORS.blue}>● 上课中</Text>:null}
+    <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
+      lineLimit={compact?3:4} foregroundStyle={fg}>{course.title}</Text>
+    <Text font={compact?8:9} foregroundStyle={done?COLORS.muted:COLORS.faint}
       lineLimit={1}>{course.startLabel}–{course.endLabel}</Text>
-    {course.location?<Text font={compact?9:10}
+    {course.location?<Text font={compact?8:9}
       foregroundStyle={done?COLORS.muted:COLORS.faint}
       lineLimit={compact?1:2}>{course.location}</Text>:null}
+    {course.teacher?<Text font={compact?8:9}
+      foregroundStyle={done?COLORS.muted:COLORS.faint}
+      lineLimit={1}>{course.teacher}</Text>:null}
   </VStack>;
 }
 
-function DayColumn({day,width,compact=false,maxRows=3}){
-  const shown=day.courses.slice(0,maxRows),overflow=day.courses.length-maxRows;
+function DayColumn({day,width,compact=false,maxRows=1}){
+  const window=selectVisibleCourses(day,maxRows);
   const dayColor=day.today?COLORS.blue:COLORS.dark;
-  return <VStack key={String(day.index)} alignment="center" spacing={compact?5:7}
-      frame={{width,alignment:'top'}}>
-    <VStack spacing={2} frame={{width}} padding={{top:7,bottom:7}}
-      background={day.today?{style:COLORS.headBg,shape:{type:'rect',cornerRadius:9}}:undefined}>
-      <Text font={compact?12:14} fontWeight="bold"
-        foregroundStyle={dayColor}>{day.label}</Text>
-      <Text font={compact?9:10} foregroundStyle={day.today?COLORS.blue:COLORS.faint}>
-        {day.weekday} {day.dateLabel}
+  return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
+    frame={{width,alignment:'top'}}>
+    <VStack spacing={1} frame={{width}} padding={{top:4,bottom:5}}
+      background={day.today?{style:COLORS.headBg,shape:{type:'rect',cornerRadius:8}}:undefined}>
+      <Text font={compact?11:13} fontWeight="bold" foregroundStyle={dayColor}>
+        {day.label}
       </Text>
+      <Text font={compact?8:9} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
+        lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
-    {shown.length?shown.map(c=><CourseCard key={c.id} course={c} compact={compact}/>):
-      <VStack frame={{width,minHeight:compact?42:58,alignment:'center'}}>
-        <Text font={11} foregroundStyle={COLORS.muted}>无课</Text>
-      </VStack>}
-    {overflow>0?<Text font={10} foregroundStyle={COLORS.faint}>另有 {overflow} 节</Text>:null}
+    {window.courses.length?window.courses.map(c=>
+      <CourseCard key={c.id} course={c} compact={compact}/>):
+      <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
+    {window.total>window.courses.length?
+      <Text font={compact?8:9} foregroundStyle={COLORS.faint}>
+        {window.position}/{window.total} · 自动定位
+      </Text>:null}
   </VStack>;
 }
 
-// Four readable columns instead of squeezing seven days into the same widget.
+// GeometryReader measures the actual widget CONTENT rect, rather than the
+// screen's width. A conservative inset prevents clipping at rounded corners.
+// No footer or stretchy Spacer can push the title outside the visible area.
 function RollingPanel({model,family}){
   const medium=family==='systemMedium';
-  const portrait=family==='systemExtraLargePortrait';
-  const width=Widget.displaySize?.width||320;
-  const gap=medium?5:7,padding=medium?10:13;
-  const usable=Math.max(240,width-padding*2);
-  const colWidth=Math.floor((usable-gap*3)/4);
-  const maxRows=medium?1:portrait?5:3;
-  return <VStack alignment="leading" spacing={medium?8:12} padding={padding}
-    widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
-    frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-    <HStack alignment="center" spacing={6}>
-      <Text font={medium?14:17} fontWeight="bold"
-        foregroundStyle={COLORS.dark}>近日课表</Text>
-      <Spacer/>
-      <Text font={medium?9:10} foregroundStyle={COLORS.faint}>
-        {formatWeekLabel(model.start+24*3600000)}
-      </Text>
-    </HStack>
-    <HStack alignment="top" spacing={gap} frame={{maxWidth:'infinity'}}>
-      {model.days.map(day=><DayColumn key={String(day.index)} day={day}
-        width={colWidth} compact={medium} maxRows={maxRows}/>)}
-    </HStack>
-    <Spacer minLength={0}/>
-    <HStack spacing={5} frame={{maxWidth:'infinity'}}>
-      <Text font={9} foregroundStyle={COLORS.faint}>下课后变灰 · 上课中高亮</Text>
-      <Spacer/>
-      {model.outdated?<Text font={9} foregroundStyle={COLORS.blue}>请刷新课表</Text>:null}
-    </HStack>
-  </VStack>;
+  return <GeometryReader>
+    {proxy=>{
+      const width=proxy.size.width,height=proxy.size.height;
+      const pad=medium?8:10,gap=medium?5:7;
+      const colWidth=Math.max(40,Math.floor((width-2*pad-24-gap*3)/4));
+      const maxRows=!medium&&height>=320?2:1;
+      return <VStack alignment="leading" spacing={medium?6:9}
+        padding={pad}
+        widgetBackground={{light:'#F7F9FD',dark:'#141E2C'}}
+        frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+        <HStack alignment="center" spacing={5}
+          frame={{maxWidth:'infinity',alignment:'leading'}}>
+          <Text font={medium?13:15} fontWeight="bold" foregroundStyle={COLORS.dark}>
+            近日课表
+          </Text>
+          <Spacer/>
+          <Text font={10} foregroundStyle={COLORS.faint}>自动更新</Text>
+        </HStack>
+        <HStack alignment="top" spacing={gap}
+          frame={{maxWidth:'infinity',alignment:'leading'}}>
+          {model.days.map(day=><DayColumn key={String(day.index)} day={day}
+            width={colWidth} compact={medium} maxRows={maxRows}/>)}
+        </HStack>
+      </VStack>;
+    }}
+  </GeometryReader>;
 }
 
 function SmallPanel({model}){
@@ -113,6 +117,7 @@ function SmallPanel({model}){
         foregroundStyle={chosen.status==='done'?COLORS.muted:COLORS.dark}>{chosen.title}</Text>
       <Text font={10} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
       <Text font={10} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.location}</Text>
+      {chosen.teacher?<Text font={10} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.teacher}</Text>:null}
     </VStack>:
     <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
     <Spacer minLength={0}/>

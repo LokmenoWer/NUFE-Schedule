@@ -1088,6 +1088,9 @@ function widgetCacheProjection(state,now=Date.now()){
         id:String(e.id||'').slice(0,100),
         title:e.title.slice(0,90),
         location:String(e.location||'').slice(0,65),
+        teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
+          .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
+          .join('、').slice(0,75),
         start:e.start,end:e.end
       });
       if(courses.length>400)return null; // Never silently truncate classes.

@@ -25,7 +25,8 @@ export function readWidgetMirror(storage){
   const events=[];
   for(const e of obj.events){
     if(!e||typeof e.title!=='string'||typeof e.start!=='string'||
-       typeof e.end!=='string'||typeof e.location!=='string')
+       typeof e.end!=='string'||typeof e.location!=='string'||
+       (e.teacher!==undefined&&typeof e.teacher!=='string'))
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
     events.push(e);
   }
@@ -102,8 +103,10 @@ function safeCourse(event,weekStart,weekEnd){
      start<weekStart||start>=weekEnd||end-start>DAY) return null;
   const day=Math.floor((start-weekStart)/DAY);
   if(day<0||day>6)return null;
+  const teacher=typeof event.teacher==='string'?event.teacher:
+    Array.isArray(event.teachers)?event.teachers.filter(x=>typeof x==='string').join('、'):'';
   return {id:plainText(event.id,100),title:plainText(event.title,90),
-    location:plainText(event.location,65),start,end,day,
+    location:plainText(event.location,65),teacher:plainText(teacher,75),start,end,day,
     startLabel:timeString(start),endLabel:timeString(end)};
 }
 
@@ -191,6 +194,25 @@ export function buildRollingDays(state,now=Date.now()){
     updated:Number.isFinite(updated)?updated:null,
     outdated:Number.isFinite(updated)&&at-updated>7*DAY,
     empty:courses.length===0};
+}
+
+// WidgetKit does not support gesture-driven continuous scrolling. Move the
+// visible window to the current class (or next class), on each timeline refresh.
+export function selectVisibleCourses(day,limit=1){
+  const all=Array.isArray(day?.courses)?day.courses:[];
+  const n=Math.max(1,Math.min(5,Math.trunc(Number(limit)||1)));
+  if(all.length<=n)return {courses:all,hiddenBefore:0,hiddenAfter:0,position:all.length?1:0,total:all.length};
+  let from=0;
+  if(day.index===0)from=Math.max(0,all.length-n);
+  else if(day.today){
+    const active=all.findIndex(c=>c.status==='current');
+    const next=all.findIndex(c=>c.status==='upcoming');
+    from=active>=0?active:next>=0?next:Math.max(0,all.length-n);
+  }
+  const shown=all.slice(from,from+n);
+  return {courses:shown,hiddenBefore:from,
+    hiddenAfter:all.length-from-shown.length,
+    position:shown.length?from+1:0,total:all.length};
 }
 
 export function widgetReloadDate(model){
