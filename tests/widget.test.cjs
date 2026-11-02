@@ -422,9 +422,20 @@ test('widget renders expanded today pair without test-only labels',()=>{
  a.doesNotMatch(ui,/>测试<\/Text>/);
  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
+test('card paints color after fixed-width frame so backgrounds center like headers',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const start=ui.indexOf('const cardStyle=modifiers()');
+ const end=ui.indexOf('return <VStack key={course.id}',start);
+ a.ok(start>0&&end>start);
+ const pipeline=ui.slice(start,end);
+ a.ok(pipeline.indexOf('.padding(')<pipeline.indexOf('.frame('));
+ a.ok(pipeline.indexOf('.frame(')<pipeline.indexOf('.background('));
+ a.match(ui,/modifiers=\{cardStyle\}/);
+ a.match(ui,/HStack key=\{c\.id\}/);
+});
 test('course card retains comfortable internal padding independent of widget outer inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/padding=\{compact\?6:8\}/);
+ a.match(ui,/\.padding\(compact\?6:8\)/);
  a.match(ui,/safeInset=medium\?9:12/);
 });
 test('all widget families retain an opaque white background',()=>{
@@ -440,7 +451,8 @@ test('all day card widths are explicit and centered within four equal slots',()=
  a.match(ui,/<HStack key=\{c\.id\} alignment="top" spacing=\{0\}/);
  a.match(ui,/<Spacer minLength=\{0\}\/>\s*<CourseCard course=\{c\}/);
  a.match(ui,/width=\{cardWidth\}/);
- a.match(ui,/frame=\{width\?\{width,alignment:'topLeading'\}/);
+ a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
+ a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
 });
 test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/current\?'#F0F7FF':done\?COLORS.muted/); });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{

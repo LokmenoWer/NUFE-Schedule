@@ -731,8 +731,12 @@ test('credential form captures both fields before WebView dismissal',async()=>{
  a.equal(presented,true);a.equal(dismissed,true);a.equal(disposed,true);a.equal(afterDismissEvaluated,false);
  a.ok(html.includes('type="password"'));a.ok(html.includes('id="account"'));
  a.ok(!html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
- a.equal(await requestGuard({url:'https://example.org'}),false);
- a.equal(await requestGuard({url:'about:blank'}),true);
+ // This HTML is self-contained and remote requests are forbidden by CSP.
+ // The host must be free to navigate to its private HTML base URL.
+ a.equal(requestGuard,null);
+ a.ok(html.includes('default-src'));
+ a.ok(html.includes('connect-src'));
+ a.ok(html.includes('form-action'));
 });
 test('closing the credential form without submitting cancels without saving',async()=>{
  const e=await env();
@@ -760,26 +764,42 @@ test('credential form itself does not persist before school authentication',asyn
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 
-test('WebView initialization timeout safely falls back to native secure inputs',async()=>{
- const e=await env(),prompts=[];let disposed=false;
+test('WebView initialization timeout asks before opening two native secure inputs',async()=>{
+ const e=await env(),prompts=[],confirms=[];let disposed=false;
  e.sandbox.__sdk.WebViewController=class{
   async addScriptMessageHandler(){const x=new Error('WEBVIEW_TIMEOUT');x.code='WEBVIEW_TIMEOUT';throw x;}
   dispose(){disposed=true;}
  };
  e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
- e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ e.sandbox.__sdk.Dialog.confirm=async o=>{confirms.push(o);return true;};
  const r=await e.m.credentialForm({showRemember:true});
- a.equal(r.username,'student-id');a.equal(r.password,'safe-password');a.equal(Object.hasOwn(r,'remember'),false);
+ a.equal(r.username,'student-id');a.equal(r.password,'safe-password');
+ a.equal(Object.hasOwn(r,'remember'),false);
+ a.equal(confirms.length,1);a.match(confirms[0].message,/WEBVIEW_TIMEOUT/);
  a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
 });
 
-test('missing WebView message bridge uses native secure fields without crashing',async()=>{
- const e=await env();const prompts=[];
+test('declining fallback cancels login before any sensitive input',async()=>{
+ const e=await env();let confirmCount=0,promptCount=0;
+ e.sandbox.__sdk.WebViewController=class{
+  async addScriptMessageHandler(){const err=new Error('WEBVIEW_UNAVAILABLE');err.code='WEBVIEW_UNAVAILABLE';throw err;}
+  dispose(){}
+ };
+ e.sandbox.__sdk.Dialog.confirm=async()=>{confirmCount++;return false;};
+ e.sandbox.__sdk.Dialog.prompt=async()=>{promptCount++;return 'SHOULD_NOT_RUN';};
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(confirmCount,1);a.equal(promptCount,0);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+
+test('missing WebView message bridge has consent-only secure input recovery',async()=>{
+ const e=await env();const prompts=[],confirms=[];
  e.sandbox.__sdk.WebViewController=class{dispose(){}};
+ e.sandbox.__sdk.Dialog.confirm=async opts=>{confirms.push(opts);return true;};
  e.sandbox.__sdk.Dialog.prompt=async options=>{prompts.push(options);return prompts.length===1?'id':'pw';};
  const result=await e.m.credentialForm();
  a.equal(result.username,'id');a.equal(result.password,'pw');
- a.equal(prompts.length,2);
+ a.equal(confirms.length,1);a.equal(prompts.length,2);
  a.equal(prompts[1].obscureText,true);
 });
 test('invalid message-bridge payload never dismisses or reveals credentials',async()=>{

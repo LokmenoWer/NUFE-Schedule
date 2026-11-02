@@ -1,7 +1,7 @@
 // @ts-nocheck
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
-import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script } from 'scripting';
+import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, widgetReloadDate } from './widget-data';
 
 const COLORS={
@@ -16,10 +16,15 @@ function CourseCard({course,compact=false,width}){
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
+  // Modifier order matters: paint the rounded background AFTER sizing the
+  // card. Previously the visible background used its intrinsic text width
+  // and sat to the left inside an otherwise centered, fixed-width frame.
+  const cardStyle=modifiers()
+    .padding(compact?6:8)
+    .frame(width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'})
+    .background({style:bg,shape:{type:'rect',cornerRadius:9}});
   return <VStack key={course.id} alignment="leading" spacing={compact?2:3}
-      padding={compact?6:8}
-      background={{style:bg,shape:{type:'rect',cornerRadius:9}}}
-      frame={width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'}}>
+      modifiers={cardStyle}>
     <Text font={compact?10:11} fontWeight={current?'bold':'semibold'}
       lineLimit={compact?4:5} foregroundStyle={fg}>{course.title}</Text>
     <Text font={compact?8:9} foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}

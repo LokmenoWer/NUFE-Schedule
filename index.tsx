@@ -540,7 +540,10 @@ async function credentialForm({title='NUFE 登录'}={}){
   let w=null;
   try{
     w=new WebView();
-    w.shouldAllowRequest=req=>String(req.url||'')==='about:blank';
+    // This page contains only our inline HTML and is locked down by its CSP.
+    // Do not block non-about:blank navigation during loadHTML: Scripting's
+    // WebKit implementation can use internal non-about:blank URLs, which
+    // previously made this single-form view fail and opened two prompts.
     let submitted=null;
     // The bridge is the only path from this local HTML page to the host.
     // Never persist or log the values returned by the bridge.
@@ -582,10 +585,17 @@ async function credentialForm({title='NUFE 登录'}={}){
     if(!submitted)fail('CANCELLED');
     return submitted;
   }catch(e){
-    // A broken WebKit instance should not block all password logins.
-    // Only technical WebView errors use the two native secure prompts;
-    // a user cancellation never triggers fallback.
+    // Never silently replace the single login form with two separate prompts.
+    // If the local WebView is unavailable, explain the failure and ask first.
+    // Cancelling the unified form never causes a fallback or stores a password.
     if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
+      const consent=await HostDialog.confirm({
+        title:'无法显示统一登录窗口',
+        message:'本地账号密码窗口加载失败（'+e.code+'）。是否改用两个系统安全输入框继续？',
+        cancelLabel:'取消登录',
+        confirmLabel:'使用系统输入框'
+      });
+      if(!consent)fail('CANCELLED');
       return await fallbackCredentialForm({title});
     }
     throw e;
