@@ -15,8 +15,9 @@ const COLORS={
 function CourseCard({course,compact=false,width,density='normal'}){
   // Larger single today card; compact side-by-side today cards.
   const smallText=density==='pair',largeText=density==='single';
-  const titleSize=smallText?9:largeText?(compact?13:15):(compact?11:13);
-  const detailSize=smallText?8:largeText?(compact?10:11):(compact?9:10);
+  // Enlarge readable text without overflowing narrow two-card layouts.
+  const titleSize=smallText?(compact?10:11):largeText?(compact?15:17):(compact?13:15);
+  const detailSize=smallText?(compact?9:10):largeText?(compact?12:13):(compact?11:12);
   const cardPadding=smallText?5:compact?7:8;
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
@@ -49,10 +50,10 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
   return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
     frame={{width,alignment:'top'}}>
     <VStack spacing={1} frame={{width}} padding={{top:1,bottom:2}}>
-      <Text font={compact?14:17} fontWeight="bold" foregroundStyle={dayColor}>
+      <Text font={compact?16:18} fontWeight="bold" foregroundStyle={dayColor}>
         {day.label}
       </Text>
-      <Text font={compact?9:10} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
+      <Text font={compact?10:11} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
     {window.courses.length?window.courses.map(c=>
@@ -63,9 +64,9 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
           density={emphasize?'single':'normal'}/>
         <Spacer minLength={0}/>
       </HStack>):
-      <Text font={10} foregroundStyle={COLORS.muted}>无课</Text>}
+      <Text font={12} foregroundStyle={COLORS.muted}>无课</Text>}
     {window.hiddenAfter>0?
-      <Text font={compact?9:10} foregroundStyle={COLORS.faint}>
+      <Text font={compact?10:11} foregroundStyle={COLORS.faint}>
         +{window.hiddenAfter}节课
       </Text>:null}
   </VStack>;
@@ -79,10 +80,10 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
   return <VStack alignment="center" spacing={compact?4:5}
       frame={{width,alignment:'top'}}>
     <VStack spacing={1} frame={{width}} padding={{top:1,bottom:2}}>
-      <Text font={compact?14:17} fontWeight="bold" foregroundStyle={COLORS.blue}>
+      <Text font={compact?16:18} fontWeight="bold" foregroundStyle={COLORS.blue}>
         {day.label}
       </Text>
-      <Text font={compact?9:10} foregroundStyle={COLORS.blue}
+      <Text font={compact?10:11} foregroundStyle={COLORS.blue}
         lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
@@ -91,7 +92,7 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
       </VStack>
       <VStack alignment="center" spacing={4} frame={{width:cardWidth,alignment:'top'}}>
         {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact} width={cardWidth} density="pair"/>:null}
-        {focus.hiddenAfter>0?<Text font={compact?9:10}
+        {focus.hiddenAfter>0?<Text font={compact?10:11}
           foregroundStyle={COLORS.faint}>+{focus.hiddenAfter}节课</Text>:null}
       </VStack>
     </HStack>
@@ -156,11 +157,11 @@ function SmallPanel({model}){
         chosen.status==='current'?COLORS.activeBg:COLORS.nextBg,
         shape:{type:'rect',cornerRadius:10}}}
       padding={9}>
-      <Text font={13} fontWeight="semibold" lineLimit={2}
-        foregroundStyle={chosen.status==='done'?COLORS.muted:COLORS.dark}>{chosen.title}</Text>
-      <Text font={10} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
-      <Text font={10} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.location}</Text>
-      {chosen.teacher?<Text font={10} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.teacher}</Text>:null}
+      <Text font={15} fontWeight="semibold" lineLimit={2}
+        foregroundStyle={chosen.status==='done'?COLORS.muted:chosen.status==='current'?'#FFFFFF':COLORS.dark}>{chosen.title}</Text>
+      <Text font={11} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
+      <Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.location}</Text>
+      {chosen.teacher?<Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.teacher}</Text>:null}
     </VStack>:
     <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
     <Spacer minLength={0}/>

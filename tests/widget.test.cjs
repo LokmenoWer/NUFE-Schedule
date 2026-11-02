@@ -328,15 +328,15 @@ test('single visible today lesson gets large text and three equal day widths',()
  a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
  a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
  a.match(ui,/density=\{emphasize\?'single':'normal'\}/);
- a.match(ui,/largeText\?\(compact\?13:15\)/);
+ a.match(ui,/largeText\?\(compact\?15:17\)/);
 });
 test('only two visible today cards activate smaller pair typography',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/const todayFocus=selectTodayPair\(today\)/);
  a.match(ui,/const expanded=todayFocus\.courses\.length>1/);
  a.match(ui,/density="pair"/);
- a.match(ui,/const titleSize=smallText\?9:/);
- a.match(ui,/const detailSize=smallText\?8:/);
+ a.match(ui,/const titleSize=smallText\?\(compact\?10:11\):/);
+ a.match(ui,/const detailSize=smallText\?\(compact\?9:10\):/);
  const courses=['早课','午课','晚课'].map((title,i)=>({title,status:i===2?'current':'done'}));
  const focus=core.selectTodayPair({courses});
  a.deepEqual(Array.from(focus.courses,x=>x.title),['晚课']);
@@ -404,7 +404,7 @@ test('private mirror keeps live courses separate from 2024-2025-2 preview',()=>{
 test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
-  a.match(ui,/font=\{compact\?14:17\}/);
+  a.match(ui,/font=\{compact\?16:18\}/);
   a.match(ui,/day\.label/);
   a.match(ui,/day\.weekday/);
   a.match(ui,/day\.dateLabel/);
@@ -456,6 +456,40 @@ test('all three day sections center visible cards; expanded today remains symmet
  a.match(ui,/width=\{day\.today\?todayWidth:sideWidth\}/);
  a.match(ui,/\.frame\(width\?\{width,alignment:'topLeading'\}/);
  a.match(ui,/\.frame\([\s\S]*?\.background\(\{style:bg,shape:/);
+});
+test('readable three-day widget uses larger but density-aware typography',()=>{
+ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ const title=ui.match(/const titleSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
+ const detail=ui.match(/const detailSize=smallText\?\(compact\?(\d+):(\d+)\):largeText\?\(compact\?(\d+):(\d+)\):\(compact\?(\d+):(\d+)\)/);
+ a.ok(title&&detail,'all course text variants must have explicit sizes');
+ const t=title.slice(1).map(Number),d=detail.slice(1).map(Number);
+ // Pair < normal < single for medium and large cards.
+ for(let i=0;i<2;i++){
+   a.ok(t[i]>=10);
+   a.ok(t[i]<t[i+4]&&t[i+4]<t[i+2]);
+   a.ok(d[i]>=9);
+   a.ok(d[i]<d[i+4]&&d[i+4]<d[i+2]);
+ }
+ a.equal((ui.match(/font=\{compact\?16:18\}/g)||[]).length,2);
+ a.match(ui,/font=\{compact\?10:11\} foregroundStyle=\{day\.today/);
+ a.match(ui,/font=\{12\} foregroundStyle=\{COLORS\.muted\}>无课/);
+ a.match(ui,/<Text font=\{15\} fontWeight="semibold" lineLimit=\{2\}/);
+ a.match(ui,/foregroundStyle=\{chosen\.status==='done'\?COLORS\.muted:chosen\.status==='current'\?'#FFFFFF':COLORS\.dark\}/);
+});
+test('README documents the actual three-day UI and retains installation screenshots',()=>{
+ const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
+ a.match(readme,/## 项目介绍/);
+ a.match(readme,/## 用户指南/);
+ a.match(readme,/昨天、今天、明天/);
+ a.match(readme,/今天一节可见课程/);
+ a.match(readme,/今天两节可见课程/);
+ a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
+ for(const file of ['scripting-import-menu.webp','scripting-remote-zip.webp','scripting-project-card.webp','shortcuts-automation.webp','scripting-refresh-menu.webp']){
+  a.match(readme,new RegExp('docs/images/'+file.replaceAll('.','\\.')));
+ }
+ a.match(readme,/releases\/download\/stable\/NUFE-Schedule\.zip/);
+ a.match(readme,/退出登录/);
+ a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });
 test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/current\?'#F0F7FF':done\?COLORS.muted/); });
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
