@@ -3,7 +3,9 @@ const {test}=require('node:test');const a=require('node:assert/strict');const vm
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
  .replace("import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);');
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);')
+ .replace("import { createNativeProgressView } from './progress-native';",
+   'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -36,90 +38,101 @@ const activity=(x={})=>({courseName:'高等数学',weekday:1,startUnit:1,endUnit
 const tx=(before,target)=>({id:crypto.randomUUID(),sid:'161',anchor:'2026-09-07',name:'学期',before,target,stamp:new Date().toISOString(),changes:{added:0,removed:0,changed:0,examples:[]},skipped:[]});
 const code=c=>e=>e&&e.code===c;
 
-test('foreground progress uses real stage labels without false percentages or secret data',async()=>{
- const e=await env({hostEnv:'index'}),pages=[],evaluations=[],modal=[];
- e.sandbox.__sdk.WebViewController=class {
-   constructor(options){a.equal(options.ephemeral,true);pages.push(this);}
-   async loadHTML(html){a.match(html,/正在刷新课表/);a.doesNotMatch(html,/外部资源/);return true;}
-   present(opts){modal.push('open:'+opts.navigationTitle);return new Promise(resolve=>{this.resolve=resolve;});}
-   async evaluateJavaScript(code){evaluations.push(code);return true;}
-   dismiss(){modal.push('dismiss');this.resolve?.();this.resolve=null;}
-   dispose(){modal.push('dispose');}
- };
+test('native foreground progress shows once, pauses for verification and resumes only when done',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show:()=>calls.push('show'),
+   pause:()=>calls.push('pause'),
+   resume:()=>calls.push('resume'),
+   finish:()=>calls.push('finish')
+ });
  const progress=e.m.createProgress(e.state,e.store,true);
  progress('检查目标日历');await progress.start();
- progress('读取学期 161');await Promise.resolve();
- a.ok(evaluations.some(x=>x.includes('正在刷新课表')));
- progress('等待输入学校登录信息');await Promise.resolve();
- a.ok(modal.includes('dismiss'));
- progress('提交学校认证请求');await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,1);
- progress('认证完成后读取课表页面');await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
- progress('读取学期 161');progress('写入学期 161 的日历事件');
- progress('读取学期 162');progress('写入学期 162 的日历事件');
- await Promise.resolve();
- a.equal(modal.filter(x=>x.startsWith('open:')).length,2);
- a.doesNotMatch(JSON.stringify(evaluations),/正在更新 Apple 日历|正在获取课程信息/);
- progress.finish();
- a.ok(modal.includes('dispose'));
- a.equal(e.m.safeProgressLabel('写入学期 161 的日历事件'),'正在更新 Apple 日历');
- a.doesNotMatch(JSON.stringify(evaluations),/password=|Cookie=|学号/);
+ progress('读取学期 161');
+ progress('等待输入学校登录信息');
+ progress('提交学校认证请求');
+ progress('等待二次认证');
+ progress('发送短信');
+ a.deepEqual(calls,['show','pause','pause']);
+ progress('认证完成后读取课表页面');
+ progress('写入学期 161 的日历事件');
+ progress('写入学期 162 的日历事件');
+ progress.finish();progress.finish();
+ a.deepEqual(calls,['show','pause','pause','resume','finish']);
+ a.equal(e.state.lastStage,'写入学期 162 的日历事件');
+ a.equal(e.state.stageHistory.at(-1).stage,'写入学期 162 的日历事件');
 });
-test('user-dismissed progress stays closed across multiple semester updates',async()=>{
- const e=await env({hostEnv:'index'});let opens=0;
- e.sandbox.__sdk.WebViewController=class{
-  async loadHTML(){return true;}
-  present(){opens++;return Promise.resolve();}
-  evaluateJavaScript(){return Promise.resolve(true);}
-  dismiss(){}dispose(){}
- };
+
+test('progress stage returns a dismissal promise before opening native challenges',async()=>{
+ const e=await env({hostEnv:'index'});let done;
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show(){},pause(){return new Promise(resolve=>{done=resolve;});},
+   resume(){},finish(){}
+ });
  const p=e.m.createProgress(e.state,e.store,true);
- p('检查目标日历');await p.start();
- await Promise.resolve();
- p('读取学期 161');p('写入学期 161 的日历事件');
- p('读取学期 162');p('写入学期 162 的日历事件');
- a.equal(opens,1);
+ await p.start();
+ const release=p('等待输入学校登录信息');
+ a.equal(typeof release?.then,'function');
+ done();await release;
  p.finish();
 });
-test('progress HTML navigation stays internal and render loop gets a chance to show',async()=>{
- const e=await env({hostEnv:'index'}),views=[];
- e.sandbox.__sdk.WebViewController=class{
-   constructor(){views.push(this);}
-   async loadHTML(html){a.match(html,/Content-Security-Policy/);return true;}
-   present(options){a.equal(options.navigationTitle,'正在刷新课表');return Promise.resolve();}
-   evaluateJavaScript(){return Promise.resolve(true);}
-   dismiss(){}dispose(){}
- };
- const p=e.m.createProgress(e.state,e.store,true);
- p('检查目标日历');await p.start();p.finish();
- a.equal(views.length,1);
- a.equal(views[0].shouldAllowRequest,undefined); // Do not reject WebKit's HTML navigation.
+test('native progress can be hidden for CAPTCHA and never reopens between requests',async()=>{
+ const e=await env({hostEnv:'index'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>({
+   show:()=>calls.push('show'),pause:()=>calls.push('pause'),
+   resume:()=>calls.push('resume'),finish:()=>calls.push('finish')
+ });
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();
+ progress('等待图形验证');
+ progress('查询是否需要验证码');
+ progress('本机加密登录密码（原生安全随机数）');
+ progress('提交学校认证请求');
+ a.deepEqual(calls,['show','pause']);
+ progress('读取学期 161');
+ progress.finish();
+ a.deepEqual(calls,['show','pause','resume','finish']);
 });
-test('when progress page cannot load, report the failure and still permit syncing',async()=>{
- const e=await env({hostEnv:'index'}),alerts=[];
- e.sandbox.__sdk.WebViewController=class{async loadHTML(){return false;}dispose(){}};
- e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
- const p=e.m.createProgress(e.state,e.store,true);
- await p.start();p('请求学期 161 课表数据');p.finish();
- a.equal(alerts.length,1);
- a.match(alerts[0].message,/PROGRESS_LOAD/);
+
+test('native progress unavailable never blocks foreground synchronization',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>{throw Error('UI_NOT_AVAILABLE');};
+ const progress=e.m.createProgress(e.state,e.store,true);
+ progress('检查目标日历');await progress.start();
+ progress('请求学期 161 课表数据');progress.finish();
  a.equal(e.state.lastStage,'请求学期 161 课表数据');
 });
-test('background sync never opens progress UI or adds modal prompts',async()=>{
- const e=await env({hostEnv:'intent'}),opens=[];
- e.sandbox.__sdk.WebViewController=class {constructor(){opens.push(true);}};
- const p=e.m.createProgress(e.state,e.store,false);
- p('读取学期 161');await p.start();p.finish();
- a.deepEqual(opens,[]);
+
+test('native progress requires a foreground Navigation API',async()=>{
+ const e=await env({hostEnv:'index'});let created=0;
+ e.sandbox.__progressUIFactory=()=>{created++;return {show(){},pause(){},resume(){},finish(){}};};
+ const progress=e.m.createProgress(e.state,e.store,true);
+ await progress.start();progress('读取学期 161');progress.finish();
+ a.equal(created,0);
  a.equal(e.state.lastStage,'读取学期 161');
 });
-test('progress UI failure never blocks actual foreground calendar synchronization',async()=>{
- const e=await env({hostEnv:'index'});
- e.sandbox.__sdk.WebViewController=class{constructor(){throw Error('webview unavailable');}};
- const p=e.m.createProgress(e.state,e.store,true);
- p('开始刷新');await p.start();p('完成本次同步');p.finish();
- a.equal(e.state.lastStage,'完成本次同步');
+
+test('background sync never opens any interactive progress UI',async()=>{
+ const e=await env({hostEnv:'intent'}),calls=[];
+ e.sandbox.__sdk.Navigation={present:()=>Promise.resolve()};
+ e.sandbox.__progressUIFactory=()=>{calls.push('created');return {};};
+ const progress=e.m.createProgress(e.state,e.store,false);
+ progress('读取学期 161');await progress.start();progress.finish();
+ a.deepEqual(calls,[]);
+ a.equal(e.state.lastStage,'读取学期 161');
+});
+
+test('progress has no HTML and no artificial percentages',()=>{
+ const start=source.indexOf('function createProgress(state,store,interactive)');
+ const end=source.indexOf('// Recognize a previously bound calendar',start);
+ a.ok(start>0&&end>start);
+ const body=source.slice(start,end);
+ a.match(body,/createNativeProgressView\(\)/);
+ a.doesNotMatch(body,/WebView|loadHTML|evaluateJavaScript|window\.updateStage|percentage/);
 });
 test('widget mirror publishes only non-sensitive verified course fields',async()=>{
  const e=await env();
@@ -363,49 +376,45 @@ test('second background invocation does not start while a previous lock is held'
  a.equal(e.store.read().failures,0);
 });
 test('manual school login saves to Keychain only after verified success',async()=>{
- const e=await env();let handler=null,tableVisits=0;
- e.sandbox.__sdk.WebViewController=class{
-   async addScriptMessageHandler(_name,cb){handler=cb;}
-   async loadHTML(){return true;}
-   async present(){await handler({username:'verified-student',password:'verified-password'});}
-   dismiss(){}dispose(){}
- };
- const html='var personId=100;var currentSemester={"id":161};';
- const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
-   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table'){
-     return {url,text:++tableVisits===1?'<html>login required</html>':html};
-   }
-   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {
-     url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
-   };
-   if(opt.body)return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:html};
-   return {url,text:''};
- },authJSON:async()=>({isNeed:false})};
- const page=await e.m.coursePage(http,true);
- a.match(page,/personId=100/);
- const saved=e.m.readSavedCredentials();
- a.equal(saved.username,'verified-student');a.equal(saved.password,'verified-password');
- a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
- a.ok(![...e.files.values()].some(v=>String(v).includes('verified-password')));
+  const e=await env({hostEnv:'index'});let tableVisits=0;
+  e.sandbox.__sdk.Navigation={present:()=>true};
+  e.sandbox.__nativeCredentialMock=async()=>({
+    username:'verified-student',password:'verified-password'
+  });
+  const html='var personId=100;var currentSemester={"id":161};';
+  const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+    if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table'){
+      return {url,text:++tableVisits===1?'<html>login required</html>':html};
+    }
+    if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {
+      url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="e123"><input id="pwdEncryptSalt" value="1234567890123456"></form>'
+    };
+    if(opt.body)return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:html};
+    return {url,text:''};
+  },authJSON:async()=>({isNeed:false})};
+  const page=await e.m.coursePage(http,true);
+  a.match(page,/personId=100/);
+  const saved=e.m.readSavedCredentials();
+  a.equal(saved.username,'verified-student');a.equal(saved.password,'verified-password');
+  a.ok(e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
+  a.ok(![...e.files.values()].some(v=>String(v).includes('verified-password')));
 });
+
 test('failed school authentication never saves a password',async()=>{
- const e=await env();let handler;
- e.sandbox.__sdk.WebViewController=class{
-   async addScriptMessageHandler(_name,fn){handler=fn;}
-   async loadHTML(){return true;}
-   async present(){await handler({username:'student',password:'invalid-password'});}
-   dismiss(){}dispose(){}
- };
- let visits=0;
- const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
-   if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table')return {url,text:'not authenticated'};
-   if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
-   if(opt.body){visits++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'invalid'};}
-   return {url,text:''};
- },authJSON:async()=>({isNeed:false})};
- await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
- a.equal(visits,1);
- a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+  const e=await env({hostEnv:'index'});let visits=0;
+  e.sandbox.__sdk.Navigation={present:()=>true};
+  e.sandbox.__nativeCredentialMock=async()=>({
+    username:'student',password:'invalid-password'
+  });
+  const http={jar:new e.m.CookieJar(),get:async(url,opt={})=>{
+    if(url==='https://jwxt.nufe.edu.cn/student/for-std/course-table')return {url,text:'not authenticated'};
+    if(url==='https://jwxt.nufe.edu.cn/student/sso/login')return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"><input name="execution" value="abc"><input id="pwdEncryptSalt" value="1234567890123456"></form>'};
+    if(opt.body){visits++;return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'invalid'};}
+    return {url,text:''};
+  },authJSON:async()=>({isNeed:false})};
+  await a.rejects(()=>e.m.coursePage(http,true),code('LOGIN_FAILED'));
+  a.equal(visits,1);
+  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 test('one SMS challenge requires only its code and selects the schools trusted-device option',async()=>{
  const e=await env();let prompts=0,codePosts=0,submitBodies=[];
@@ -452,7 +461,22 @@ test('Scripting first provisioning creates a named iCloud calendar and syncs wit
 test('Scripting native secure random encrypts password with no WebView dependency',async()=>{const e=await env();const ciphertext=await e.m.encryptPassword('local-test-secret','1234567890123456');const cipher=crypto.createDecipheriv('aes-128-cbc',Buffer.from('1234567890123456'),Buffer.alloc(16));const plain=Buffer.concat([cipher.update(Buffer.from(ciphertext,'base64')),cipher.final()]);a.ok(plain.toString('utf8').endsWith('local-test-secret'));});
 test('Scripting Keychain boolean failure prevents false saved-credential success',async()=>{const e=await env();e.sandbox.__sdk.Keychain.set=()=>false;a.throws(()=>e.m.saveCredentials('sample','local'),code('CREDENTIALS_UNAVAILABLE'));a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);});
 test('Scripting native fetch cancels redirect and exposes parsed cookie metadata',async()=>{const e=await env();let stopped=false;e.sandbox.fetchImpl=async(url,opt)=>{a.equal(opt.allowInsecureRequest,false);a.equal(await opt.handleRedirect({url:'https://jwxt.nufe.edu.cn/student/login'}),null);stopped=true;return {status:302,headers:{forEach:fn=>{fn('/student/login','location');},get:()=>null},cookies:[{name:'school',value:'local-token',domain:'jwxt.nufe.edu.cn',path:'/',expiresDate:null}],mimeType:'text/html',text:async()=>''};};const req=new e.m.ScriptingAdapter.Request('https://jwxt.nufe.edu.cn/student/sso/login');let redirected='';req.onRedirect=r=>{redirected=r.url;return null;};await req.loadString();a.ok(stopped);a.equal(redirected,'https://jwxt.nufe.edu.cn/student/login');a.equal(req.response.cookies[0].name,'school');});
-test('Scripting WebView expressions use explicit return function body',async()=>{const e=await env();e.sandbox.__sdk.WebViewController=class{async loadHTML(){return true;}async evaluateJavaScript(js){return js;}dispose(){}};const w=new e.m.ScriptingAdapter.WebView();w.shouldAllowRequest=r=>r.url==='about:blank';a.equal(await w.inner.shouldAllowRequest({url:'https://evil.test'}),false);a.equal(await w.evaluateJavaScript('window.result'),'return (window.result);');});
+test('remaining slider WebView is ephemeral, does not expose JS evaluation and presents only local HTML',async()=>{
+ const e=await env();let initialized=null;
+ e.sandbox.__sdk.WebViewController=class{
+   constructor(options){initialized=options;}
+   async loadHTML(html){a.match(html,/Content-Security-Policy/);return true;}
+   async present(options){a.equal(options.navigationTitle,'滑块验证');}
+   dispose(){}
+ };
+ const w=new e.m.ScriptingAdapter.WebView();
+ a.equal(initialized.ephemeral,true);
+ a.equal(typeof w.evaluateJavaScript,'undefined');
+ a.equal(typeof w.shouldAllowRequest,'undefined');
+ await w.loadHTML('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">');
+ await w.present('滑块验证');
+ w.inner.dispose();
+});
 test('Scripting recurrence flag detects even a single visible series instance',async()=>{const e=await env();const old=e.add(lesson());old.hasRecurrenceRules=true;old.recurrenceRules=[{frequency:'weekly',interval:1}];e.state.tx=tx([lesson()],[lesson()]);await e.m.finishTx(e.state,e.store,new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store),()=>{});a.equal(e.db.length,1);a.notEqual(e.db[0].identifier,old.identifier);});
 test('Scripting process/module compatibility globals do not turn production startup into export-only mode',async()=>{const e=await env();e.store.write(e.state);e.store.release();e.sandbox.__NUFE_TEST__=false;await vm.runInNewContext('(async()=>{'+source+'\nawait globalThis.__NUFE_LAUNCH__;})()',e.sandbox);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);});
 
@@ -461,7 +485,12 @@ test('production ordinary-script entry runs even with process and module compati
 test('storage-constructor failures now reach startup error UI',async()=>{const e=await env(),alerts=[];e.store.release();e.sandbox.__sdk.FileManager.existsSync=()=>{throw new TypeError('private native detail must never be logged');};e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);e.sandbox.__NUFE_TEST__=false;await vm.runInNewContext(source,e.sandbox);a.equal(alerts.length,1);a.match(alerts[0].title,/启动失败/);a.match(alerts[0].message,/STARTUP_TYPE/);a.doesNotMatch(alerts[0].message,/private native detail/);});
 test('Notification schedules with specified identifier and trigger',async()=>{const e=await env();let scheduled=null;e.sandbox.__sdk.Notification.schedule=async o=>{scheduled=o;return 'notice-1';};const n=new e.m.ScriptingAdapter.Notification();n.identifier='nufe-test-123';n.title='Test';n.body='Body';n.setTriggerDate(new Date(Date.now()+60000));await n.schedule();a.equal(scheduled.identifier,'nufe-test-123');a.ok(scheduled.triggerDate||scheduled.trigger);});
 test('VERIFIED_TERM_ANCHORS supports multiple academic years',async()=>{const {m}=await env();a.ok(m.VERIFIED_TERM_ANCHORS['2024-2025-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2025-2026-1']);a.ok(m.VERIFIED_TERM_ANCHORS['2026-2027-1']);});
-test('widget degrades gracefully when ListWidget is not defined',async()=>{const e=await env();e.sandbox.config.runsInWidget=true;await a.doesNotReject(async()=>{await e.m.run();});});
+test('widget has a single dedicated Scripting entry with no legacy ListWidget renderer',()=>{
+ const native=fs.readFileSync(__dirname+'/../index.tsx','utf8');
+ const widget=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+ a.doesNotMatch(native,/ListWidget|runsInWidget|widgetParameter|async function widget\(/);
+ a.match(widget,/Widget\.present\(/);
+});
 
 test('course location omits campus while preserving room or building',async()=>{const {m}=await env();a.equal(m.expand(raw([activity()]),161,'2026-09-07').events[0].location,'教A101');a.equal(m.expand(raw([activity({room:'',building:'德业楼'})]),161,'2026-09-07').events[0].location,'德业楼');});
 test('every manual refresh checks all available semesters, including already synced historical ones',async()=>{
@@ -790,10 +819,10 @@ test('dismissed native login cancels instead of launching a fallback form',async
  a.equal(prompts,0);a.equal(confirmations,0);
 });
 
-test('native login startup errors request consent before WebView fallback',async()=>{
+test('native credential sheet failure asks consent before system prompts',async()=>{
  const e=await env({hostEnv:'index'});
  e.sandbox.__sdk.Navigation={present:()=>true};
- e.sandbox.__nativeCredentialMock=async()=>{throw Error('NATIVE_TEST');};
+ e.sandbox.__nativeCredentialMock=async()=>{throw Error('NATIVE_FAILURE');};
  let confirms=0;
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    confirms++;
@@ -803,109 +832,42 @@ test('native login startup errors request consent before WebView fallback',async
  await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
  a.equal(confirms,1);
 });
-test('credential form captures both fields before WebView dismissal',async()=>{
- const e=await env();let html='',presented=false,disposed=false,dismissed=false,handler=null,requestGuard=null;
- let afterDismissEvaluated=false;
- e.sandbox.__sdk.WebViewController=class{
-  constructor(){this.shouldAllowRequest=null;}
-  async addScriptMessageHandler(name,callback){a.equal(name,'nufeCredentials');handler=callback;}
-  async loadHTML(page){html=page;requestGuard=this.shouldAllowRequest;return true;}
-  async present(){presented=true;await handler({username:'  test-student  ',password:'test-password',remember:true});}
-  async evaluateJavaScript(){afterDismissEvaluated=true;throw Error('must never evaluate after dismiss');}
-  dismiss(){dismissed=true;}
-  dispose(){disposed=true;}
- };
- const result=await e.m.credentialForm({title:'NUFE 登录'});
- a.equal(result.username,'test-student');a.equal(result.password,'test-password');
- a.equal(Object.hasOwn(result,'remember'),false);
- a.equal(presented,true);a.equal(dismissed,true);a.equal(disposed,true);a.equal(afterDismissEvaluated,false);
- a.ok(html.includes('type="password"'));a.ok(html.includes('id="account"'));
- a.ok(!html.includes('id="remember"'));a.ok(html.includes('nufeCredentials.postMessage'));
- // This HTML is self-contained and remote requests are forbidden by CSP.
- // The host must be free to navigate to its private HTML base URL.
- a.equal(requestGuard,null);
- a.ok(html.includes('default-src'));
- a.ok(html.includes('connect-src'));
- a.ok(html.includes('form-action'));
-});
-test('closing the credential form without submitting cancels without saving',async()=>{
- const e=await env();
- e.sandbox.__sdk.WebViewController=class{
-  async addScriptMessageHandler(){}
-  async loadHTML(){return true;}
-  async present(){}
-  dispose(){}
- };
- await a.rejects(()=>e.m.credentialForm({showRemember:true}),code('CANCELLED'));
- a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
-});
-test('credential form itself does not persist before school authentication',async()=>{
- const e=await env();let handler;
- e.sandbox.__sdk.WebViewController=class{
-  async addScriptMessageHandler(_name,callback){handler=callback;}
-  async loadHTML(){return true;}
-  async present(){await handler({username:'student',password:'pass',remember:false});}
-  dismiss(){}
-  dispose(){}
- };
- const result=await e.m.credentialForm();
- a.equal(result.username,'student');
- a.equal(Object.hasOwn(result,'remember'),false);
- a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
-});
 
-test('WebView initialization timeout asks before opening two native secure inputs',async()=>{
- const e=await env(),prompts=[],confirms=[];let disposed=false;
- e.sandbox.__sdk.WebViewController=class{
-  async addScriptMessageHandler(){const x=new Error('WEBVIEW_TIMEOUT');x.code='WEBVIEW_TIMEOUT';throw x;}
-  dispose(){disposed=true;}
- };
- e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
+test('when native navigation is unavailable, system prompts require consent',async()=>{
+ const e=await env({hostEnv:'index'}),prompts=[],confirms=[];
  e.sandbox.__sdk.Dialog.confirm=async o=>{confirms.push(o);return true;};
- const r=await e.m.credentialForm({showRemember:true});
- a.equal(r.username,'student-id');a.equal(r.password,'safe-password');
- a.equal(Object.hasOwn(r,'remember'),false);
- a.equal(confirms.length,1);a.match(confirms[0].message,/WEBVIEW_TIMEOUT/);
- a.equal(prompts.length,2);a.equal(prompts[1].obscureText,true);a.equal(disposed,true);
-});
-
-test('declining fallback cancels login before any sensitive input',async()=>{
- const e=await env();let confirmCount=0,promptCount=0;
- e.sandbox.__sdk.WebViewController=class{
-  async addScriptMessageHandler(){const err=new Error('WEBVIEW_UNAVAILABLE');err.code='WEBVIEW_UNAVAILABLE';throw err;}
-  dispose(){}
- };
- e.sandbox.__sdk.Dialog.confirm=async()=>{confirmCount++;return false;};
- e.sandbox.__sdk.Dialog.prompt=async()=>{promptCount++;return 'SHOULD_NOT_RUN';};
- await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
- a.equal(confirmCount,1);a.equal(promptCount,0);
- a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
-});
-
-test('missing WebView message bridge has consent-only secure input recovery',async()=>{
- const e=await env();const prompts=[],confirms=[];
- e.sandbox.__sdk.WebViewController=class{dispose(){}};
- e.sandbox.__sdk.Dialog.confirm=async opts=>{confirms.push(opts);return true;};
- e.sandbox.__sdk.Dialog.prompt=async options=>{prompts.push(options);return prompts.length===1?'id':'pw';};
+ e.sandbox.__sdk.Dialog.prompt=async o=>{prompts.push(o);return prompts.length===1?'student-id':'safe-password';};
  const result=await e.m.credentialForm();
- a.equal(result.username,'id');a.equal(result.password,'pw');
+ a.equal(result.username,'student-id');a.equal(result.password,'safe-password');
  a.equal(confirms.length,1);a.equal(prompts.length,2);
  a.equal(prompts[1].obscureText,true);
-});
-test('invalid message-bridge payload never dismisses or reveals credentials',async()=>{
- const e=await env();let handler,dismissed=false;
- e.sandbox.__sdk.WebViewController=class{
-  async addScriptMessageHandler(_n,fn){handler=fn;}
-  async loadHTML(){return true;}
-  async present(){const result=await handler({username:'',password:'bad'});a.equal(result,false);}
-  dismiss(){dismissed=true;}
-  dispose(){}
- };
- await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
- a.equal(dismissed,false);
  a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
 });
 
+test('declining native fallback cancels before requesting any password',async()=>{
+ const e=await env({hostEnv:'index'});let prompted=0;
+ e.sandbox.__sdk.Dialog.confirm=async()=>false;
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompted++;return 'SHOULD_NOT_BE_USED';};
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(prompted,0);
+});
+
+test('interactive credential screen cannot open in background jobs',async()=>{
+ const e=await env({hostEnv:'intent'});
+ await a.rejects(()=>e.m.credentialForm(),code('AUTH_INTERACTIVE_REQUIRED'));
+});
+
+test('slider only accepts plausible bounded, manually-dragged trajectories',async()=>{
+ const e=await env();const validate=e.m.validSliderResult;
+ const valid={canvasLength:280,moveLength:122,tracks:[
+   {a:0,b:0,c:0},{a:40,b:1,c:110},{a:122,b:2,c:50}
+ ]};
+ a.equal(validate(valid),true);
+ a.equal(validate({...valid,moveLength:1000}),false);
+ a.equal(validate({...valid,tracks:[{a:0,b:0,c:0}]}),false);
+ a.equal(validate({...valid,tracks:[{a:0,b:0,c:0},{a:'100',b:0,c:10}]}),false);
+ a.equal(validate({...valid,tracks:new Array(1001).fill({a:2,b:0,c:20})}),false);
+});
 test('calendar title appends all teachers once and does not invent unknown teacher',async()=>{
  const {m}=await env();
  a.equal(m.calendarTitle(lesson()),'高等数学（张老师）');

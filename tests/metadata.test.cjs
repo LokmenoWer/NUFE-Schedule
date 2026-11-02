@@ -40,7 +40,7 @@ test('release and README describe the same stable installation path',()=>{
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
   assert.match(read('docs/release-notes.md'),/NUFE-Schedule\.zip/);
-  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx script\.json/);
+  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx script\.json/);
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
@@ -72,6 +72,6 @@ test('widget distribution includes the native entry and safe cache model',()=>{
   assert.match(entry,/buildWidgetModel\(/);
   assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
   assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
-  assert.match(read('scripts/package.sh'),/"6"/);
+  assert.match(read('scripts/package.sh'),/"7"/);
   assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm \} from '\.\/login-native'/);
 });

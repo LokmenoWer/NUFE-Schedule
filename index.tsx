@@ -2,6 +2,7 @@
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';
+import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
 async function __NUFE_REPORT_STARTUP(error){
@@ -32,8 +33,8 @@ let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')
 const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu':'sync')).trim().toLowerCase()==='menu'?'menu':'sync';
 let __shortcutOutput=null;
 const __webviews=new Set();
-const config={runsInApp:HostScript.env==='index',runsInWidget:false,runsWithSiri:true};
-const args={shortcutParameter:__mode==='menu'?'':'sync',widgetParameter:''};
+const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
+const args={shortcutParameter:__mode==='menu'?'':'sync'};
 const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutput=String(value);},complete:()=>{
   for(const w of __webviews)try{w.dispose();}catch(_){}
   HostScript.exit(__intent?.text?__intent.text(__shortcutOutput||'处理完成'):__shortcutOutput);
@@ -102,10 +103,12 @@ class Request{
  async loadString(){return this.execute(false);}async load(){return this.execute(true);}
 }
 class WebView{
- constructor(){this.inner=new (hostAPI('WebViewController'))({ephemeral:true});__webviews.add(this.inner);}
- set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
+ constructor(){
+   const Controller=hostAPI('WebViewController');
+   if(typeof Controller!=='function')fail('WEBVIEW_UNAVAILABLE');
+   this.inner=new Controller({ephemeral:true});__webviews.add(this.inner);
+ }
  async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
- async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
  async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
@@ -552,11 +555,8 @@ async function fieldsFrom(html,id) {
   for(const name of ['execution','lt'])if(!out[name]){const x=lookup('name',name);if(x)out[name]=x.value||'';}
   return out;
 }
-// Compact, local-only credential entry. No school webpage or third-party URL
-// is loaded. Password stays hidden and the ephemeral view is disposed promptly.
-// The form sends the result WHILE the WebView is still presented; accessing
-// the DOM after closing the sheet can hang because WebKit suspends detached views.
-// A legacy native prompt fallback keeps login usable if the WebView cannot load.
+// Passwords are entered in a native iOS sheet. No embedded HTML login page,
+// fake website domain, separate cookie store or duplicated credential bridge.
 async function fallbackCredentialForm({title='NUFE 登录'}={}){
   const username=(await legacyInput(title,'NUFE 学号')).trim();
   const password=await legacyInput(title,'NUFE 密码（安全输入）',true);
@@ -564,94 +564,35 @@ async function fallbackCredentialForm({title='NUFE 登录'}={}){
   return {username,password};
 }
 async function credentialForm({title='NUFE 登录'}={}){
-  // Prefer SwiftUI-backed iOS controls: these expose textContentType=username
-  // and textContentType=password, unlike our local HTML hosted by scripting.fun.
-  // iOS may still ask the user to choose an existing school-site credential.
-  if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+  if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  let code='NATIVE_FORM_UNAVAILABLE';
+  if(typeof hostAPI('Navigation')?.present==='function'){
     try{
       const native=await presentNativeCredentialForm(title);
       if(!native)fail('CANCELLED');
       return native;
     }catch(e){
       if(e?.code==='CANCELLED')throw e;
-      const code=e&&typeof e.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code)?e.code:'NATIVE_FORM_UNAVAILABLE';
-      const fallback=await HostDialog.confirm({
-        title:'原生登录窗口不可用',
-        message:'原生账号密码窗口未能打开（'+code+'）。是否改用本地网页表单继续？',
-        cancelLabel:'取消登录',
-        confirmLabel:'使用备用表单'
-      });
-      if(!fallback)fail('CANCELLED');
+      if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
   }
-  let w=null;
-  try{
-    w=new WebView();
-    // This page contains only our inline HTML and is locked down by its CSP.
-    // Do not block non-about:blank navigation during loadHTML: Scripting's
-    // WebKit implementation can use internal non-about:blank URLs, which
-    // previously made this single-form view fail and opened two prompts.
-    let submitted=null;
-    // The bridge is the only path from this local HTML page to the host.
-    // Never persist or log the values returned by the bridge.
-    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
-    await bounded(w.inner.addScriptMessageHandler('nufeCredentials',async value=>{
-      if(submitted)return false;
-      if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
-      const username=value.username.trim(),password=value.password;
-      if(!username||username.length>100||!password||password.length>512)return false;
-      submitted={username,password};
-      // Close only AFTER data crossed to native code. Do not evaluate JS
-      // in a view already dismissed / suspended by WebKit.
-      try{w.inner.dismiss();}catch(_){}
-      return true;
-    }),12000,'WEBVIEW_TIMEOUT');
-    const html=[
-      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
-      '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
-      'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
-      'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
-      'button{display:block;width:100%;background:#1769dd;color:white;font:600 17px -apple-system;padding:13px;border:0;border-radius:12px;margin-top:22px}',
-      'button:disabled{opacity:.55}.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:14px}</style></head><body>',
-      '<h2>NUFE 统一身份认证</h2>',
-      // Use a real username/password form and iOS Password AutoFill semantic hints.
-      // Submission stays entirely local: JS prevents default and CSP blocks form posts.
-      '<form id="login-form" autocomplete="on" novalidate>',
-      '<label class="label" for="account">学号</label><input id="account" name="username" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
-      '<label class="label" for="secret">密码</label><input id="secret" name="password" type="password" maxlength="512" autocomplete="current-password">',
-      '<button type="submit" id="submit">确认</button></form>',
-      '<p class="hint" id="hint">认证成功后自动保存至 iCloud 钥匙串；关闭页面则取消。</p>',
-      '<script>(function(){const button=document.getElementById("submit"),hint=document.getElementById("hint"),form=document.getElementById("login-form");',
-      'form.addEventListener("submit",async event=>{event.preventDefault();const username=document.getElementById("account").value.trim(),password=document.getElementById("secret").value;',
-      'if(!username||!password){hint.textContent="请输入学号和密码。";return;}button.disabled=true;',
-      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password});',
-      'if(!ok){hint.textContent="请检查输入内容。";button.disabled=false;}}',
-      'catch(_){hint.textContent="未能提交登录信息，请重试。";button.disabled=false;}});})();</script></body></html>'
-    ].join('');
-    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
-    await w.present(title);
-    if(!submitted)fail('CANCELLED');
-    return submitted;
-  }catch(e){
-    // Never silently replace the single login form with two separate prompts.
-    // If the local WebView is unavailable, explain the failure and ask first.
-    // Cancelling the unified form never causes a fallback or stores a password.
-    if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
-      const consent=await HostDialog.confirm({
-        title:'无法显示统一登录窗口',
-        message:'本地账号密码窗口加载失败（'+e.code+'）。是否改用两个系统安全输入框继续？',
-        cancelLabel:'取消登录',
-        confirmLabel:'使用系统输入框'
-      });
-      if(!consent)fail('CANCELLED');
-      return await fallbackCredentialForm({title});
-    }
-    throw e;
-  }finally{
-    if(w){try{w.inner.dispose();}catch(_){}__webviews.delete(w.inner);}
-  }
+  // The only fallback is still a native iOS Dialog (two secure prompts).
+  // Ask before showing them; never silently downgrade the combined form.
+  const consent=await HostDialog.confirm({
+    title:'原生登录窗口不可用',
+    message:'无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？',
+    cancelLabel:'取消登录',confirmLabel:'继续'
+  });
+  if(!consent)fail('CANCELLED');
+  return await fallbackCredentialForm({title});
+}
+function validSliderResult(value) {
+  if(!value||value.canvasLength!==280||!Number.isFinite(value.moveLength)||
+     value.moveLength<=0||value.moveLength>240)return false;
+  const tracks=value.tracks;
+  return Array.isArray(tracks)&&tracks.length>=2&&tracks.length<=1000&&
+    tracks.every(t=>t&&['a','b','c'].every(k=>Number.isFinite(t[k]))&&
+      t.a>=0&&t.a<=240&&Math.abs(t.b)<=800&&t.c>=0&&t.c<=600000);
 }
 async function humanSlider(http) {
   await http.get(AUTH+'/common/toSliderCaptcha.htl',{ajax:true});
@@ -659,17 +600,38 @@ async function humanSlider(http) {
   assert(typeof j.bigImage==='string'&&typeof j.smallImage==='string'&&j.bigImage.length<700000&&j.smallImage.length<700000,'CAPTCHA');
   const small=Array.from(Data.fromBase64String(j.smallImage).getBytes());const key=String.fromCharCode(...small.slice(-16));assert(/^[A-Za-z0-9]{16}$/.test(key),'CAPTCHA');
   const imageType=s=>s.startsWith('iVBOR')?'image/png':s.startsWith('/9j/')?'image/jpeg':fail('CAPTCHA');
-  const w=new WebView();w.shouldAllowRequest=r=>/^(?:about:blank|data:image\/(?:png|jpeg);base64,)/.test(String(r.url||''));
-  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动滑块，松开后点击右上角完成。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><p id="status"></p><script>
+  const w=new WebView();
+  let submitted=null;
+  try {
+    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
+    await bounded(w.inner.addScriptMessageHandler('nufeSlider',payload=>{
+      // Local drag data is untrusted: reject malformed or oversized trajectories
+      // instead of encrypting arbitrary WebKit messages for the school server.
+      if(submitted||!validSliderResult(payload))return false;
+      submitted=payload;
+      try{w.inner.dismiss();}catch(_){}
+      return true;
+    }),12000,'WEBVIEW_TIMEOUT');
+  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><script>
   const bg=document.getElementById('bg'),piece=document.getElementById('piece'),knob=document.getElementById('knob');
-  bg.onload=piece.onload=()=>{piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
+  bg.onload=piece.onload=()=>{if(!bg.naturalWidth||!piece.naturalWidth)return;piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
   bg.src=${JSON.stringify('data:'+imageType(j.bigImage)+';base64,'+j.bigImage)};piece.src=${JSON.stringify('data:'+imageType(j.smallImage)+';base64,'+j.smallImage)};
   let active=false,x=0,y=0,lastAt=0,last=null,tracks=[];window.result=null;
-  knob.onpointerdown=e=>{e.preventDefault();knob.setPointerCapture(e.pointerId);active=true;x=e.clientX;y=e.clientY;lastAt=Date.now();last=null;tracks=[{a:0,b:0,c:0}];window.result=null;};
+  knob.onpointerdown=e=>{e.preventDefault();document.getElementById('submit').disabled=true;knob.setPointerCapture(e.pointerId);active=true;x=e.clientX;y=e.clientY;lastAt=Date.now();last=null;tracks=[{a:0,b:0,c:0}];window.result=null;};
   knob.onpointermove=e=>{if(!active)return;const dx=e.clientX-x,dy=e.clientY-y;if(dx<0||dx+40>280)return;knob.style.left=Math.max(0,dx-1)+'px';piece.style.left=dx+'px';const now=Date.now(),dt=now-lastAt;if(dt<20)return;const p={a:dx,b:dy,c:dt};if(last&&Math.hypot(p.a-last.a,p.b-last.b)<2)return;tracks.push(p);last=p;lastAt=now;};
-  knob.onpointerup=e=>{if(!active)return;active=false;const dx=e.clientX-x;if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击完成提交。';};knob.onpointercancel=()=>{active=false;window.result=null;};</script>`;
-  await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');await w.present();const result=await bounded(w.evaluateJavaScript('window.result'),12000,'WEBVIEW_TIMEOUT');assert(result&&result.tracks,'CANCELLED');
-  const sign=await encryptPassword(JSON.stringify(result),key);const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});assert(answer.errorCode===1,'CAPTCHA');
+  knob.onpointerup=e=>{if(!active)return;active=false;const dx=Math.max(0,Math.min(240,e.clientX-x));if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击提交验证。';document.getElementById('submit').disabled=false;};knob.onpointercancel=()=>{active=false;window.result=null;document.getElementById('submit').disabled=true;};document.getElementById('submit').onclick=async()=>{if(!window.result)return;const button=document.getElementById('submit');button.disabled=true;try{const ok=await window.webkit.messageHandlers.nufeSlider.postMessage(window.result);if(!ok){button.disabled=false;document.getElementById('status').textContent='滑动数据无效，请重新拖动。';}}catch(_){button.disabled=false;}};</script>`;
+    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
+    await w.present();
+    if(!submitted)fail('CANCELLED');
+    const sign=await encryptPassword(JSON.stringify(submitted),key);
+    const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});
+    assert(answer.errorCode===1,'CAPTCHA');
+  }finally{
+    // WebKit may suspend JS immediately after dismissal. Never evaluate
+    // JavaScript after present(), and always release the ephemeral controller.
+    try{w.inner.dispose();}catch(_){}
+    __webviews.delete(w.inner);
+  }
 }
 function reauthValue(html,key) {const m=new RegExp('"'+key+'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(html);return m?JSON.parse('"'+m[1]+'"'):'';}
 async function mfa(http,r) {
@@ -702,9 +664,9 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     const need=await http.authJSON(AUTH+'/checkNeedCaptcha.htl?'+form({username,_:Date.now()}));assert(typeof need.isNeed==='boolean','CAPTCHA');
     let captcha='';if(need.isNeed||/\b_badCredentialsCount\s*=\s*["']?0\b/.test(r.text)) {
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){onStage('等待图形验证');await humanSlider(http);}
+      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){await onStage('等待图形验证');await humanSlider(http);}
       else {
-        onStage('等待图形验证');
+        await onStage('等待图形验证');
         const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});
         assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');
         // Keep the school image in memory. Show it together with the input
@@ -732,7 +694,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
     if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      onStage('等待二次认证');await mfa(http,r);
+      await onStage('等待二次认证');await mfa(http,r);
     }else if(safeURL(r.url).host==='authserver.nufe.edu.cn'&&/\/login(?:\?|$)/.test(r.url)){
       fail(interactive?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
     }
@@ -751,7 +713,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
+    await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   if(!interactive){
     const saved=readSavedCredentials();
@@ -759,7 +721,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
-  onStage('等待输入学校登录信息');
+  await onStage('等待输入学校登录信息');
   const account=await credentialForm({title:'NUFE 登录'});
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
   // Save only AFTER the school confirms successful authentication. The
@@ -1376,123 +1338,46 @@ function stampStage(state,store,stage){
 // A foreground-only, local progress sheet. Stages are genuine completed
 // operations, not invented percentages. Keep it out of shortcut automations.
 // Native login, captcha and MFA must remain unobstructed by this sheet.
-function safeProgressLabel(message){
-  const m=String(message||'');
-  if(/读取学期|请求学期|课表数据/.test(m))return '正在获取课程信息';
-  if(/写入学期|更新课程|导入|保存/.test(m))return '正在更新 Apple 日历';
-  if(/核验|核对|检查旧|扫描专用日历/.test(m))return '正在核对日历内容';
-  if(/清理|移除/.test(m))return '正在整理旧课程';
-  if(/登录|认证|Cookie|设备指纹|验证码|密码/.test(m))return '正在连接学校认证服务';
-  if(/完成/.test(m))return '课表更新已完成';
-  return '正在刷新课表';
-}
 function createProgress(state,store,interactive){
-  let view=null,closed=false,paused=false,visible=false,generation=0;
-  let latest='正在刷新课表',started=false,painting=false,pending=false;
-  let loadFailure=null,dismissedByUser=false,awaitingVerification=false,lastPainted=null;
-  function show(){
-    // A single presentation stays alive for the whole noninteractive phase.
-    // User-dismissed progress must never reappear on the next stage update.
-    if(!view||closed||paused||visible||dismissedByUser)return;
-    visible=true;lastPainted=null;const id=++generation;
-    try{Promise.resolve(view.present({fullscreen:false,navigationTitle:'正在刷新课表'}))
-      .then(()=>{if(generation===id){visible=false;dismissedByUser=true;}})
-      .catch(()=>{if(generation===id){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}});}
-    catch(_){visible=false;dismissedByUser=true;loadFailure='PROGRESS_PRESENT';}
-  }
-  function hide(){
-    if(paused)return;
-    paused=true;generation++;visible=false;lastPainted=null;
-    try{view?.dismiss();}catch(_){}
-  }
-  async function paint(){
-    if(!view||closed||paused)return;
-    if(painting){pending=true;return;}
-    painting=true;
-    try{
-      do{
-        pending=false;
-        // Never queue hundreds of JS bridge calls during HTTP/event updates.
-        const label=latest;
-        if(label===lastPainted)break;
-        await view.evaluateJavaScript('return window.updateStage('+JSON.stringify(label)+')');
-        lastPainted=label;
-      }while(pending&&view&&!closed&&!paused);
-    }catch(_){loadFailure='PROGRESS_STAGE';}
-    finally{painting=false;}
-  }
+  // Every detailed stage is still persisted for diagnostics. The native
+  // progress sheet is intentionally not a fake percent-based progress bar.
+  let ui=null,closed=false,started=false,waitingForVerification=false;
   const stage=message=>{
     stampStage(state,store,message);
-    if(!interactive||closed)return;
-    const name=String(message);
-    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(name)){
-      awaitingVerification=true;hide();return;
+    if(!interactive||closed||!started||!ui)return;
+    const label=String(message||'');
+    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
+      waitingForVerification=true;
+      // Caller awaits the native sheet dismissal before presenting another.
+      return ui.pause();
     }
-    // The login/MFA pipeline has many intermediate HTTP stages. Do not reopen
-    // the progress page between native credential, SMS and CAPTCHA sheets.
-    // Resume once after authentication or when calendar work actually begins.
-    if(awaitingVerification){
-      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(name))return;
-      awaitingVerification=false;paused=false;
+    if(waitingForVerification){
+      // Never flash the sheet between captcha, SMS and login HTTP requests.
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
+      waitingForVerification=false;
+      ui.resume();
     }
-    // Keep one stable visible label while detailed steps remain in local logs.
-    // This avoids a flashing title every time a semester changes phase.
-    latest='正在刷新课表';
-    if(started)show();
-    if(visible)void paint();
   };
   stage.start=async()=>{
-    if(!interactive||closed||started)return;
+    if(!interactive||started||closed)return;
     started=true;
-    const Controller=hostAPI('WebViewController');
-    if(typeof Controller!=='function')return;
     try{
-      view=new Controller({ephemeral:true});
-      // This HTML is self-contained and CSP blocks ALL outgoing requests.
-      // Do not install a navigation blocker: WebKit internally navigates
-      // through non-about:blank URLs when loading raw HTML on some versions.
-      const html=[
-        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; img-src \'none\'; form-action \'none\'">',
-        '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;background:Canvas;color:CanvasText;margin:0;display:grid;min-height:75vh;place-items:center}',
-        '.wrap{text-align:center;padding:24px;max-width:300px}h1{font-size:21px;margin:16px 0 8px}',
-        'p{font-size:15px;color:GrayText;line-height:1.5;margin:0}',
-        '.spinner{width:34px;height:34px;border:3px solid #8a8a8a44;border-top-color:#2476e3;border-radius:50%;margin:auto;animation:spin .85s linear infinite}',
-        '@keyframes spin{to{transform:rotate(360deg)}}small{display:block;margin-top:14px;color:GrayText}</style></head>',
-        '<body><div class="wrap"><div class="spinner" role="progressbar" aria-label="刷新中"></div>',
-        '<h1>正在同步</h1><p id="stage">正在刷新课表</p>',
-        '<small>完成后会显示结果</small></div>',
-        '<script>window.updateStage=function(s){document.getElementById("stage").textContent=String(s).slice(0,80);return true;};</script>',
-        '</body></html>'
-      ].join('');
-      if(await view.loadHTML(html)===false)throw Error('PROGRESS_LOAD');
-      if(closed){view.dispose();view=null;return;}
-      show();void paint();
-      // Yield to the Scripting UI loop before the first network request.
-      await new Promise(resolve=>Timer.schedule(120,false,resolve));
-      if(loadFailure)throw Error(loadFailure);
-    }catch(e){
-      const code=String(e?.message||'PROGRESS_UI_FAILED').slice(0,50);
-      loadFailure=code;
-      try{view?.dispose();}catch(__){}
-      view=null;
-      // An invisible UI must never look like a frozen sync.
-      // Keep this error local; the main school/calendar operation still runs.
-      if(interactive)try{
-        await HostDialog.alert({
-          title:'无法显示刷新进度',
-          message:'进度页加载异常（'+code+'）。课程仍可继续同步；若持续发生，请反馈此错误代码。'
-        });
-      }catch(__){}
+      if(typeof hostAPI('Navigation')?.present!=='function')return;
+      ui=createNativeProgressView();
+      ui.show();
+      // Yield to iOS once before network work; never block on modal dismissal.
+      await new Promise(resolve=>Timer.schedule(100,false,resolve));
+    }catch(_){
+      // A progress display failure must never turn a valid calendar sync into
+      // a failure or trigger a second, overlapping progress window.
+      ui=null;
     }
   };
   stage.finish=()=>{
     if(closed)return;
-    closed=true;generation++;visible=false;
-    try{view?.dismiss();}catch(_){}
-    try{view?.dispose();}catch(_){}
-    view=null;
+    closed=true;
+    try{ui?.finish();}catch(_){}
+    ui=null;
   };
   return stage;
 }
@@ -2141,25 +2026,6 @@ async function loginPreflight(state,store,progress){
   if(!f.execution)fail('LOGIN_EXECUTION_MISSING');
   return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
 }
-async function widget(store) {
-  if(typeof ListWidget==='undefined'){
-    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不提供旧版小组件接口，已跳过小组件输出');
-    return;
-  }
-  const state=store.read(),w=new ListWidget(),now=Date.now(),local=new Date(now+8*3600000),day=local.toISOString().slice(0,10),mode=String(args.widgetParameter||'today');
-  const midnight=Date.parse(day+'T00:00:00+08:00');let start=midnight,end=start+DAY;
-  if(mode==='tomorrow'){start+=DAY;end+=DAY;}if(mode==='week'){start-=((local.getUTCDay()+6)%7)*DAY;end=start+7*DAY;}
-  const events=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
-  let selected=events.filter(e=>Date.parse(e.start)>=start&&Date.parse(e.start)<end);
-  if(mode==='current')selected=events.filter(e=>Date.parse(e.start)<=now&&Date.parse(e.end)>now);
-  if(mode==='next')selected=events.filter(e=>Date.parse(e.start)>now).slice(0,1);
-  const family=config.widgetFamily||'medium',small=family.startsWith('accessory');
-  w.addText('NUFE · '+(mode==='week'?'本周':mode==='tomorrow'?'明天':mode==='next'?'下一节':mode==='current'?'当前':'今天')).font=Font.boldSystemFont(small?12:15);
-  for(const e of selected.slice(0,small?1:family==='large'?9:3)){if(!small)w.addSpacer(5);w.addText((Date.parse(e.start)<=now&&Date.parse(e.end)>now?'● ':'')+localDateTime(e.start).slice(mode==='week'?5:11)+' '+e.title).font=Font.systemFont(small?11:13);if(!small)w.addText(e.location).font=Font.systemFont(11);}
-  if(!selected.length)w.addText('此范围暂无课程');
-  if(!small){w.addSpacer();const success=Object.values(state.semesters).map(s=>s.lastSuccess).filter(Boolean).sort()[0];w.addText(state.tx?'同步待恢复':!success||now-Date.parse(success)>2*DAY?'课表可能过期，点按刷新':'仅本地缓存').font=Font.systemFont(10);}
-  w.url=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});w.refreshAfterDate=new Date(now+30*60000);Script.setWidget(w);
-}
 // Credentials are opt-in and iCloud-synchronizable; cookies and device IDs stay device-only.
 // install only trusted scripts, and do not export keys/values to diagnostics.
 async function manageSavedCredentials(state,store){
@@ -2254,7 +2120,7 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
 }
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
-  const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
+  const store=new Store();
   let firstSetup=false;
   if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
@@ -2361,7 +2227,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,safeProgressLabel,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,mfa,manageSavedCredentials,run};
 else await run();
 
 /*
