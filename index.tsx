@@ -1973,6 +1973,12 @@ async function run() {
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
     await synchronize(state,store,calendar,interactive,interactive,progress);
+    // WidgetKit reads the same verified App Group snapshot. Reload requests
+    // are best effort and must never turn a successful sync into a failure.
+    try{const widgets=hostAPI('Widget');if(widgets){
+      if(typeof widgets.reloadUserWidgets==='function')widgets.reloadUserWidgets();
+      else if(typeof widgets.reloadAll==='function')widgets.reloadAll();
+    }}catch(_){}
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
     if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await reportRefreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null,state,store);
     if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');

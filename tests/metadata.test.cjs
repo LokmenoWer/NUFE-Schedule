@@ -40,7 +40,7 @@ test('release and README describe the same stable installation path',()=>{
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
   assert.match(read('docs/release-notes.md'),/NUFE-Schedule\.zip/);
-  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx script\.json/);
+  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts script\.json/);
 });
 
 test('error guidance does not direct users to removed menu actions',()=>{
@@ -64,4 +64,13 @@ test('only the Release archive is distributed',()=>{
   assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
   assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
   assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
+});
+
+test('widget distribution includes the native entry and safe cache model',()=>{
+  const entry=read('widget.tsx');
+  assert.match(entry,/Widget\.present\(/);
+  assert.match(entry,/buildWeek\(/);
+  assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
+  assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
+  assert.match(read('scripts/package.sh'),/"5"/);
 });
