@@ -36,3 +36,22 @@ test('iOS password manager fields use semantic names and an actual local form',(
  assert.match(form,/form-action \\'none\\'/);
  assert.match(form,/connect-src \\'none\\'/);
 });
+
+test('native iOS credential sheet uses semantic text content types and no WebView',()=>{
+ const native=fs.readFileSync(__dirname+'/../login-native.tsx','utf8');
+ assert.match(native,/<TextField[\s\S]*?textContentType="username"/);
+ assert.match(native,/<SecureField[\s\S]*?textContentType="password"/);
+ assert.match(native,/onChanged=\{setUsername\}/);
+ assert.match(native,/onChanged=\{setPassword\}/);
+ assert.match(native,/Navigation\.present\(\{/);
+ assert.match(native,/dismiss\(\{ username: account, password \}\)/);
+ assert.match(native,/action=\{\(\) => dismiss\(null\)\}/);
+ assert.doesNotMatch(native,/WebView|loadURL|fetch\(|Clipboard|console\.log/);
+});
+
+test('credential form prefers native controls only in the foreground',()=>{
+ assert.match(form,/config\.runsInApp&&typeof hostAPI\('Navigation'\)\?\.present==='function'/);
+ assert.match(form,/await presentNativeCredentialForm\(title\)/);
+ assert.match(form,/if\(!native\)fail\('CANCELLED'\)/);
+ assert.match(form,/原生登录窗口不可用/);
+});

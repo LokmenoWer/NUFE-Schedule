@@ -1,6 +1,7 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
+import { presentNativeCredentialForm } from './login-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
 async function __NUFE_REPORT_STARTUP(error){
@@ -537,6 +538,26 @@ async function fallbackCredentialForm({title='NUFE 登录'}={}){
   return {username,password};
 }
 async function credentialForm({title='NUFE 登录'}={}){
+  // Prefer SwiftUI-backed iOS controls: these expose textContentType=username
+  // and textContentType=password, unlike our local HTML hosted by scripting.fun.
+  // iOS may still ask the user to choose an existing school-site credential.
+  if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+    try{
+      const native=await presentNativeCredentialForm(title);
+      if(!native)fail('CANCELLED');
+      return native;
+    }catch(e){
+      if(e?.code==='CANCELLED')throw e;
+      const code=e&&typeof e.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code)?e.code:'NATIVE_FORM_UNAVAILABLE';
+      const fallback=await HostDialog.confirm({
+        title:'原生登录窗口不可用',
+        message:'原生账号密码窗口未能打开（'+code+'）。是否改用本地网页表单继续？',
+        cancelLabel:'取消登录',
+        confirmLabel:'使用备用表单'
+      });
+      if(!fallback)fail('CANCELLED');
+    }
+  }
   let w=null;
   try{
     w=new WebView();

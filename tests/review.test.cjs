@@ -1,6 +1,9 @@
 // Modified 2026-11-02: classroom, front-end entry, semester-selection and note-migration regression tests.
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
-const source=fs.readFileSync(__dirname+'/../index.tsx','utf8').replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;');
+const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
+ .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
+ .replace("import { presentNativeCredentialForm } from './login-native';",
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
  const files=new Map(),keys=new Map(),widgetRecords=new Map(),db=[],notices=[],requests=[];let serial=0,failSave=false,dropSave=false,failRemove=false,noRemove=false,seriesMode=false;
  const fm={joinPath:(x,y)=>x+'/'+y,libraryDirectory:()=>'/local',fileExists:p=>files.has(p)||p==='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2',createDirectory:()=>{},writeString:(p,s)=>files.set(p,s),readString:p=>{if(!files.has(p))throw Error('missing');return files.get(p);},listContents:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),remove:p=>files.delete(p),move:(from,to)=>{if(files.has(to))throw Error('exists');files.set(to,files.get(from));files.delete(from);}};
@@ -712,6 +715,44 @@ test('password login contains no QR entry points',()=>{
  a.equal(source.includes('qrCode/getToken'),false);
  a.equal(source.includes('QR_EXPIRED'),false);
  a.equal(source.includes('选择学校登录方式'),false);
+});
+test('foreground native login receives passwords only after explicit submission',async()=>{
+ const e=await env({hostEnv:'index'});
+ const requests=[];
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeCredentialMock=async title=>{
+   requests.push(title);
+   return {username:'student',password:'secret'};
+ };
+ const r=await e.m.credentialForm({title:'保存登录凭据'});
+ a.equal(r.username,'student');
+ a.equal(r.password,'secret');
+ a.deepEqual(requests,['保存登录凭据']);
+ a.equal(e.keys.has('NUFE.Schedule.v1.icloud-credentials'),false);
+});
+
+test('dismissed native login cancels instead of launching a fallback form',async()=>{
+ const e=await env({hostEnv:'index'});let prompts=0,confirmations=0;
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeCredentialMock=async()=>null;
+ e.sandbox.__sdk.Dialog.prompt=async()=>{prompts++;throw Error('WRONG_PROMPT');};
+ e.sandbox.__sdk.Dialog.confirm=async()=>{confirmations++;throw Error('WRONG_CONFIRM');};
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(prompts,0);a.equal(confirmations,0);
+});
+
+test('native login startup errors request consent before WebView fallback',async()=>{
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__sdk.Navigation={present:()=>true};
+ e.sandbox.__nativeCredentialMock=async()=>{throw Error('NATIVE_TEST');};
+ let confirms=0;
+ e.sandbox.__sdk.Dialog.confirm=async options=>{
+   confirms++;
+   a.match(options.message,/NATIVE_FORM_UNAVAILABLE/);
+   return false;
+ };
+ await a.rejects(()=>e.m.credentialForm(),code('CANCELLED'));
+ a.equal(confirms,1);
 });
 test('credential form captures both fields before WebView dismissal',async()=>{
  const e=await env();let html='',presented=false,disposed=false,dismissed=false,handler=null,requestGuard=null;
