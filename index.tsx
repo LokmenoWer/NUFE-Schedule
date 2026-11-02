@@ -904,14 +904,15 @@ async function notify(id,body) {const n=new Notification();n.identifier='nufe-lo
 async function notifyAuthExpiredOnce(state,store) {
   if(state.authExpiryNotifiedAt)return false;
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
-  n.title='NUFE 课表 · 登录已失效';
   const code=state.lastError;
+  n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'NUFE 课表 · 登录需要处理':'NUFE 课表 · 登录已失效';
   n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表已保留，请打开 Scripting 手动验证。':
     code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表已保留，请在 Scripting 中更新凭据。':
     code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课表已保留，请在 Scripting 中检查凭据设置。':
     code==='ACCOUNT_CHANGED'?'自动登录使用的账号与原课表绑定账号不一致。程序已停止写入；请在 Scripting 中核对学号。':
     code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课表已保留，请打开 Scripting 前台手动同步。':
-    '学校会话已失效；未能自动登录。课表已保留，请在 Scripting 中检查凭据或手动登录。';
+    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课表已保留，请打开 Scripting 手动登录。':
+    '自动登录未能完成。课表已保留，请在 Scripting 中检查登录状态或完成认证。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
   state.authExpiryNotifiedAt=new Date().toISOString();state.authNoticeError=null;
@@ -1115,6 +1116,10 @@ const ERROR_GUIDE={
   NETWORK_TLS:['学校连接遇到证书或 TLS 校验问题。','检查系统时间和 HTTPS 代理设置；不要关闭证书验证。'],
   NETWORK_LOST:['学校网络连接中途断开。','检查网络稳定性后重试。'],
   NETWORK:['网络请求失败，但系统没有返回可安全区分的具体原因。','尝试 Safari 打开学校登录入口，切换网络后单次重试。'],
+  HTTP_429:['学校服务返回请求过于频繁（429）。','暂停手动刷新，等待学校解除限流后再尝试。'],
+  TOO_LARGE:['学校返回的数据超过脚本安全处理上限，未继续解析或覆盖课表。','保留当前课表和错误代码，等待检查接口返回内容。'],
+  CRYPTO:['学校密码加密所需参数无效，未提交登录密码。','检查认证页面是否发生变化，保留错误代码供适配。'],
+  CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','在「账号与日历设置 → 课表日历」检查原日历，不要直接删除。'],
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
@@ -1347,6 +1352,11 @@ async function showFailureRecovery(error,state,store){
   a.addAction(recovery.label);a.addCancelAction('关闭');
   if(await a.presentAlert()===0)return applyRecovery(recovery.kind,state,store);
 }
+function automaticRetryText(state,now=Date.now()){
+  if(state.authPaused)return '需手动处理登录（定时任务暂停尝试）';
+  const next=Number(state.nextAttempt);
+  return Number.isFinite(next)&&next>now?'计划于 '+localDateTime(new Date(next).toISOString())+'（北京时间）后重试':'可在下次自动化触发时尝试';
+}
 function statusText(state){
   const s=Object.values(state.semesters||{}).map(t=>(t.name||'学期')+'：'+(t.events||[]).length+' 节，成功同步 '+(t.lastSuccess?localDateTime(t.lastSuccess):'待确认')+(t.pending?'；待核对删除':'')+'；未排课 '+(t.skipped||[]).length).join('\n');
   const recent=state.lastFailure||null;
@@ -1360,6 +1370,7 @@ function statusText(state){
     '\n最后进展：'+briefTime(state.lastStageAt)+
     '\n事务：'+(state.tx?'待恢复':'无')+'\n取消变动：自动同步（专用课表日历）'+
     '\n登录会话：'+(state.authPaused?'需要人工处理':'未检测到强制重新登录')+
+    '\n下次自动尝试：'+automaticRetryText(state)+
     '\n自动登录凭据：'+credentialStorageStatus()+
     '\n失效通知：'+(state.authExpiryNotifiedAt?'已提醒 '+briefTime(state.authExpiryNotifiedAt):(state.authNoticeError==='NOTIFICATION_FAILED'?'通知提交失败，请检查权限':'尚未触发'))+
     '\n上次专用日历清理：'+(state.lastLegacyCleanupAt?briefTime(state.lastLegacyCleanupAt)+'，删除 '+(state.lastLegacyCleanupCount||0)+' 次，核验剩余 '+(state.lastLegacyCleanupRemaining||0)+' 条':'尚未执行')+
@@ -1721,6 +1732,19 @@ async function refreshResult(ok,code=null){
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
+// Authentication problems require one actionable notification, not a generic
+// failure alert every day. Keep the normal completion notification otherwise.
+async function reportBackgroundFailure(code,state,store){
+  try{
+    if(state&&state.authPaused)await notifyAuthExpiredOnce(state,store);
+    else await refreshResult(false,code);
+  }catch(_){
+    if(state&&store&&store.token){
+      state.authNoticeError='NOTIFICATION_FAILED';
+      try{store.write(state);}catch(__){}
+    }
+  }
+}
 // Foreground: offer a choice only when a competing task is detected.
 // Background: bounded waiting, then a clean skip; iOS may terminate a waiting
 // shortcut and must never be asked to wait indefinitely.
@@ -1802,8 +1826,8 @@ async function run() {
     if(action===5){await clearBrokenCookies(state,store);return;}
     if(action===7){const c=await pickCalendar(state,store,true);await notice('日历已绑定',c.title+'：只用于可替换的课表。旧内容会在新课表写入核验后自动清理。');return;}
     if(!interactive){
-      if(state.authPaused){await refreshResult(false,state.lastError||'AUTH_REQUIRED');if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
-      if(state.nextAttempt&&Date.now()<state.nextAttempt){await refreshResult(false,'RETRY_LATER');if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：处于失败退避等待期。');return;}
+      if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
+      if(state.nextAttempt&&Date.now()<state.nextAttempt){await reportBackgroundFailure('RETRY_LATER',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
@@ -1834,7 +1858,7 @@ async function run() {
       }
       try{store.write(state);}catch(_){}
     }
-    if(!interactive){try{await refreshResult(false,code);}catch(_){if(state&&locked){state.authNoticeError='NOTIFICATION_FAILED';try{store.write(state);}catch(__){}}}}
+    if(!interactive)await reportBackgroundFailure(code,state,store);
     if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[NUFE] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
       try{await showFailureRecovery(e,state,store);}
@@ -1844,7 +1868,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
 else await run();
 
 /*

@@ -96,12 +96,64 @@ test('ICS output escapes text and folds at 75 UTF8 bytes',async()=>{const {m}=aw
 test('result notification only reports final status without exposing credentials',async()=>{const e=await env();await e.m.refreshResult(true);await e.m.refreshResult(false,'AUTH_INTERACTIVE_REQUIRED');a.equal(e.notices.length,2);a.match(e.notices[0].title,/成功/);a.match(e.notices[1].title,/失败/);a.doesNotMatch(e.notices[1].body,/sample-student|password|cookie=/i);});
 test('diagnostics never expose native raw error contents',async()=>{const {m}=await env();a.doesNotMatch(m.errorMessage(Error('password=VERY_SECRET'),{lastStage:'测试阶段'}),/VERY_SECRET/);});
 test('bounded work rejects hung WebView and clears timer',async()=>{const {m}=await env();await a.rejects(()=>m.bounded(new Promise(()=>{}),10,'WEBVIEW_TIMEOUT'),code('WEBVIEW_TIMEOUT'));});
-test('daily sync background authentication-required exits with one failure result and no dialog',async()=>{const e=await env();e.state.authPaused=true;e.state.lastError='AUTH_INTERACTIVE_REQUIRED';e.store.write(e.state);e.store.release();await e.m.run();a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.match(e.sandbox.output,/刷新失败/);});
+test('paused background authentication sends one actionable notification, never daily repeats',async()=>{
+ const e=await env();e.state.authPaused=true;e.state.lastError='AUTH_INTERACTIVE_REQUIRED';e.store.write(e.state);e.store.release();
+ await e.m.run();
+ a.equal(e.notices.length,1);a.match(e.notices[0].title,/登录已失效/);
+ a.match(e.notices[0].body,/验证码|二次认证/);a.match(e.sandbox.output,/刷新失败/);
+ a.ok(e.store.read().authExpiryNotifiedAt);
+ await e.m.run();a.equal(e.notices.length,1);
+});
 function loggedIn(e,sourceRaw){
  e.m.HTTP.prototype.get=async function(url){return {url:'https://jwxt.nufe.edu.cn/student/for-std/course-table',text:'var personId=100;var currentSemester={"id":161};<select id="allSemesters"><option value="161">2026-2027-1</option></select>'}};
  e.m.HTTP.prototype.json=async function(url){return typeof sourceRaw==='function'?sourceRaw(url):sourceRaw;};
 }
 async function executeDaily(e){e.store.write(e.state);e.store.release();await e.m.run();}
+test('first unattended authentication failure delivers one specific alert and records it',async()=>{
+ const e=await env();
+ e.m.HTTP.prototype.get=async function(url){if(url.includes('/student/sso/login'))return {url:'https://authserver.nufe.edu.cn/authserver/login',text:'<form id="pwdFromId"></form>'};const er=new Error('AUTH_REQUIRED');er.code='AUTH_REQUIRED';throw er;};
+ await executeDaily(e);
+ const state=e.store.read();
+ a.equal(state.lastError,'AUTH_REQUIRED');a.equal(state.authPaused,true);
+ a.equal(e.notices.length,1);a.match(e.notices[0].title,/登录已失效/);
+ a.match(e.notices[0].body,/手动登录/);a.ok(state.authExpiryNotifiedAt);
+ await e.m.run();a.equal(e.notices.length,1);
+});
+test('auth notification may be sent again after a successful-login reset',async()=>{
+ const e=await env();
+ e.state.lastError='AUTH_INTERACTIVE_REQUIRED';
+ a.equal(await e.m.notifyAuthExpiredOnce(e.state,e.store),true);
+ a.equal(await e.m.notifyAuthExpiredOnce(e.state,e.store),false);
+ a.equal(e.notices.length,1);
+ e.state.authExpiryNotifiedAt=null;
+ a.equal(await e.m.notifyAuthExpiredOnce(e.state,e.store),true);
+ a.equal(e.notices.length,2);
+});
+test('notification denial records a safe status without throwing or deleting calendar data',async()=>{
+ const e=await env();
+ e.sandbox.__sdk.Notification.schedule=async()=>{throw Error('permission denied');};
+ e.state.authPaused=true;e.state.lastError='AUTH_INTERACTIVE_REQUIRED';
+ await e.m.reportBackgroundFailure('AUTH_INTERACTIVE_REQUIRED',e.state,e.store);
+ a.equal(e.state.authNoticeError,'NOTIFICATION_FAILED');
+ a.equal(e.state.authExpiryNotifiedAt,undefined);
+ a.equal(e.db.length,0);
+});
+test('retry guidance shows a concrete Beijing-time estimate without changing schedule',async()=>{
+ const e=await env();
+ const now=Date.parse('2026-11-02T00:00:00.000Z');
+ e.state.nextAttempt=now+90*60000;
+ a.match(e.m.automaticRetryText(e.state,now),/2026-11-02 09:30/);
+ a.match(e.m.statusText(e.state),/下次自动尝试：/);
+ e.state.authPaused=true;
+ a.match(e.m.automaticRetryText(e.state,now),/手动处理/);
+});
+test('unclassified HTTP throttling and oversized replies have actionable explanations',async()=>{
+ const e=await env();
+ a.match(e.m.reasonFor('HTTP_429'),/429/);
+ a.match(e.m.actionFor('HTTP_429'),/限流/);
+ a.match(e.m.reasonFor('TOO_LARGE'),/上限/);
+ a.match(e.m.actionFor('CALENDAR_READONLY'),/课表日历/);
+});
 test('end-to-end daily refresh adds, adjusts, cancels and purges old series with one result',async()=>{
  const e=await env(),old=lesson(),cancelled=lesson({id:'cancelled',week:2,start:'2026-09-14T00:00:00.000Z',end:'2026-09-14T01:40:00.000Z'});
  e.baseline([old,cancelled]);e.add(old);e.add(cancelled);for(let i=0;i<3;i++)e.add(old,{id:'old-ics',notes:'legacy recurring course',offset:i*7*86400000});const personal=e.add(old,{cal:e.other,notes:'personal'});
@@ -113,7 +165,7 @@ test('end-to-end daily refresh adds, adjusts, cancels and purges old series with
 test('end-to-end malformed source preserves every old event and reports one failure',async()=>{const e=await env();e.baseline([lesson()]);const own=e.add(lesson()),legacy=e.add(lesson(),{notes:'old'});loggedIn(e,{});await executeDaily(e);a.ok(e.db.some(x=>x.identifier===own.identifier));a.ok(e.db.some(x=>x.identifier===legacy.identifier));a.equal(e.requests.length,0);a.equal(e.notices.length,1);a.match(e.notices[0].title,/失败/);a.equal(e.store.read().lastError,'SCHEMA');});
 test('end-to-end unexpected empty source preserves old course and import',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});loggedIn(e,raw([]));await executeDaily(e);a.equal(e.db.length,2);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'EMPTY_SOURCE');a.match(e.notices[0].title,/失败/);});
 test('end-to-end failed calendar save never purges legacy data',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.add(lesson(),{notes:'old'});e.setSaveFailure(true);loggedIn(e,raw([activity({weekIndexes:[1],room:'changed'})]));await executeDaily(e);a.equal(e.db.length,2);a.ok(e.store.read().tx);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.match(e.notices[0].title,/失败/);});
-test('end-to-end school person change blocks all calendar writes',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('NUFE.Local.v1.person','another-person');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');a.equal(e.store.read().authPaused,true);a.match(e.notices[0].title,/失败/);});
+test('end-to-end school person change blocks all calendar writes',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('NUFE.Local.v1.person','another-person');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');a.equal(e.store.read().authPaused,true);a.match(e.notices[0].title,/登录需要处理/);});
 test('end-to-end changed student identity in data blocks replacement',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.keys.set('NUFE.Local.v1.student','another-student');loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'ACCOUNT_CHANGED');});
 test('end-to-end missing bound calendar never falls back to personal calendar',async()=>{const e=await env();e.state.calendarId='missing-calendar';e.add(lesson(),{cal:e.other,notes:'personal'});loggedIn(e,raw([activity()]));await executeDaily(e);a.equal(e.requests.length,0);a.equal(e.store.read().lastError,'CALENDAR_MISSING');a.equal(e.notices.length,1);});
 test('second background invocation does not start while a previous lock is held',async()=>{
