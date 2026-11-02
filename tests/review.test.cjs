@@ -133,13 +133,21 @@ test('partial refresh notification failure keeps partial status and semester err
  await e.m.reportRefreshResult(false,'PARTIAL_SYNC',e.state,e.store);
  a.equal(e.store.read().runStatus,'partial');a.equal(e.state.termErrors[0].code,'ANCHOR');a.equal(e.state.failures,0);
 });
-test('run status uses readable Chinese and distinguishes notification delivery',async()=>{
+test('compact status shows outcome and hides technical diagnostics',async()=>{
  const e=await env();
- for(const [status,label] of Object.entries({success:'刷新成功',partial:'部分完成',failed:'刷新失败',cancelled:'已取消'})){
-  e.state.runStatus=status;a.ok(e.m.statusText(e.state).includes('本次运行：'+label));
+ for(const [status,label] of Object.entries({success:'上次刷新成功',partial:'部分学期未完成',failed:'上次刷新失败',cancelled:'上次操作已取消'})){
+  e.state.runStatus=status;a.ok(e.m.statusText(e.state).includes('结果：'+label));
  }
- e.state.resultNoticeError='NOTIFICATION_FAILED';a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
+ e.state.runStatus='success';e.state.lastCheck='2026-11-02T06:30:00.000Z';
+ const concise=e.m.statusText(e.state);
+ a.match(concise,/上次完成检查：2026-11-02 14:30/);
+ a.match(concise,/非实时状态/);
+ a.doesNotMatch(concise,/最近步骤（北京时间）|自动登录凭据：|连续失败：|已导入学期：/);
+ a.match(e.m.diagnosticHistoryText(e.state),/最近步骤（北京时间）/);
+ e.state.resultNoticeError='NOTIFICATION_FAILED';
+ a.match(e.m.statusText(e.state),/不影响已完成的课表同步/);
 });
+
 test('retry deadline explicitly waits for a future automation trigger',async()=>{
  const {m}=await env();a.match(m.automaticRetryText({nextAttempt:Date.now()+60000}),/等待自动化触发/);
 });
@@ -177,6 +185,7 @@ test('retry guidance shows a concrete Beijing-time estimate without changing sch
  const now=Date.parse('2026-11-02T00:00:00.000Z');
  e.state.nextAttempt=now+90*60000;
  a.match(e.m.automaticRetryText(e.state,now),/2026-11-02 09:30/);
+ e.state.nextAttempt=Date.now()+90*60000;
  a.match(e.m.statusText(e.state),/下次自动尝试：/);
  e.state.authPaused=true;
  a.match(e.m.automaticRetryText(e.state,now),/手动处理/);
@@ -770,16 +779,71 @@ test('a malformed Cookie storage error offers only local session reset',async()=
  a.equal(e.state.nextAttempt,0);
  a.equal(e.state.lastError,null);
 });
-test('the status screen shows a recovery option only for the active recorded error',async()=>{
- const e=await env();let prompts=[];
- e.sandbox.__sdk.Dialog.confirm=async o=>{prompts.push(o);return false;};
- e.sandbox.__sdk.Dialog.alert=async()=>{};
+test('status offers only environment check; recovery belongs inside diagnostics',async()=>{
+ const e=await env(),overview=[],diagnostics=[];
+ e.sandbox.__sdk.Dialog.confirm=async o=>{overview.push(o);return true;};
+ e.sandbox.__sdk.Dialog.actionSheet=async o=>{diagnostics.push(o);return o.actions.length>1?1:null;};
  e.state.lastError='COOKIE_STORAGE';e.state.runStatus='failed';
+ a.equal(await e.m.showRunStatus(e.state,e.store),'cookie');
+ a.equal(overview.length,1);
+ a.equal(overview[0].confirmLabel,'环境自检');
+ a.doesNotMatch(overview[0].message,/连续失败：|最近步骤/);
+ a.deepEqual(Array.from(diagnostics[0].actions,x=>x.label),['查看详细运行记录','清除异常 Cookie']);
+ e.state.runStatus='success';
  a.equal(await e.m.showRunStatus(e.state,e.store),null);
- a.equal(prompts.length,1);
- a.equal(prompts[0].confirmLabel,'清除异常 Cookie');
- e.state.runStatus='success';await e.m.showRunStatus(e.state,e.store);
- a.equal(prompts.length,1);
+ a.deepEqual(Array.from(diagnostics[1].actions,x=>x.label),['查看详细运行记录']);
+});
+
+test('environment inspection only reads existing local state and never mutates data',async()=>{
+ const e=await env();
+ const oldKeys=JSON.stringify([...e.keys]),oldFiles=JSON.stringify([...e.files]),oldEvents=e.db.length;
+ const results=await e.m.inspectEnvironment(e.state,e.store);
+ a.ok(results.length>=7);
+ a.equal(results.find(x=>x.name==='本地状态').level,'正常');
+ a.equal(results.find(x=>x.name==='目标日历').level,'正常');
+ a.equal(results.find(x=>x.name==='学校连接').level,'待确认');
+ a.match(e.m.environmentCheckText(results,e.state),/只读检查/);
+ a.equal(JSON.stringify([...e.keys]),oldKeys);
+ a.equal(JSON.stringify([...e.files]),oldFiles);
+ a.equal(e.db.length,oldEvents);
+ a.equal(e.requests.length,0);
+});
+test('self-check distinguishes an inaccessible original calendar from a healthy one',async()=>{
+ const e=await env();
+ e.sandbox.__sdk.Calendar.forEvents=async()=>[e.other];
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='目标日历').level,'注意');
+ a.match(checks.find(x=>x.name==='目标日历').detail,/原日历当前不可见/);
+ a.equal(e.state.calendarId,e.calendar.identifier);
+});
+test('self-check flags pending transactions and does not clear their journal',async()=>{
+ const e=await env(),t=tx([],[lesson()]);
+ e.state.tx=t;e.store.write(e.state);
+ const before=e.files.get(e.store.path('run-lock.json'));
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='同步任务').level,'待确认'); // valid ownership is never assumed stale
+ a.equal(e.state.tx,t);
+ a.equal(e.files.get(e.store.path('run-lock.json')),before);
+ a.match(e.m.statusText(e.state),/需要恢复上次写入/);
+});
+test('school connectivity probe carries neither saved Cookie nor passwords',async()=>{
+ const e=await env(),seen=[];
+ e.keys.set('NUFE.Local.v1.cookies',JSON.stringify([{name:'SESSION',value:'secret',domain:'jwxt.nufe.edu.cn',path:'/',expires:0}]));
+ e.sandbox.fetchImpl=async(url,options)=>{seen.push({url,options});return {status:200,headers:new Map(),cookies:[],mimeType:'text/html',text:async()=>'<html>safe</html>'};};
+ const checks=await e.m.inspectEnvironment(e.state,e.store);
+ a.equal(checks.find(x=>x.name==='学校连接').level,'正常');
+ a.equal(seen.length,1);
+ a.match(seen[0].url,/^https:\/\/jwxt\.nufe\.edu\.cn\//);
+ a.ok(!seen[0].options.headers?.Cookie);
+ a.ok(!seen[0].options.body);
+ a.equal(e.keys.has('NUFE.Local.v1.cookies'),true);
+});
+test('self-check failure report includes actionable error code without secrets',async()=>{
+ const e=await env();e.state.runStatus='failed';e.state.lastError='NETWORK_DNS';
+ const report=e.m.environmentCheckText(await e.m.inspectEnvironment(e.state,e.store),e.state);
+ a.match(report,/NETWORK_DNS/);
+ a.match(report,/检查 DNS/);
+ a.doesNotMatch(report,/Cookie=|password=|学号\s*\d+/i);
 });
 test('invalid lock recovery cannot clear a live valid lock',async()=>{
  const e=await env(),path=e.store.path('run-lock.json'),before=e.files.get(path);
