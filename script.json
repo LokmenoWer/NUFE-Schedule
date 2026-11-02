@@ -3,5 +3,5 @@
   "version": "0.0.0",
   "icon": "calendar",
   "color": "#2456A6",
-  "description": "NUFE 课程表本地同步工具，支持 Scripting、快捷指令与 Apple 日历多学期维护。"
+  "description": "NUFE 课表同步至 Apple 日历，支持快捷指令自动更新。"
 }

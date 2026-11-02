@@ -1075,7 +1075,7 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单的「账号与日历设置 → 课表日历」重新选择原日历；不会未经确认创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
@@ -1098,9 +1098,9 @@ const ERROR_GUIDE={
 
   COOKIE_DOMAIN:['学校响应包含与当前认证域名不匹配的 Cookie，安全校验拒绝接收；它可能是学校配置问题，也可能是旧脚本解析兼容问题。','更新脚本以安全跳过无效 Cookie，同时保留域名验证。不要关闭域名校验或分享 Cookie 内容。'],
   COOKIE_FORMAT:['学校响应包含格式异常的 Cookie，无法安全解析。','保留最近阶段记录供适配；不要上传含 Cookie 值的网络请求日志。'],
-  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先运行「登录页面自检（无需密码）」；若仍失败，请保留诊断信息，不要反复提交密码。'],
-  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','运行「登录页面自检（无需密码）」并检查是否进入学校官方登录页。'],
-  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','运行「登录页面自检（无需密码）」；若持续发生，需要适配学校页面。'],
+  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留「运行状态」中的错误代码，不要反复提交密码。'],
+  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
+  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
   AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','从「账号与日历设置」选择「自动登录凭据」保存到 iCloud 钥匙串，或手动登录。'],
   AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
@@ -1118,7 +1118,7 @@ const ERROR_GUIDE={
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
-  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','在「账号与日历设置」选择「重新绑定课表日历」，不要删除原日历。'],
+  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','在「账号与日历设置 → 课表日历」重新选择原日历，不要删除原日历。'],
   CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
   CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
   CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
@@ -1134,9 +1134,9 @@ const ERROR_GUIDE={
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
-  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Schedule 创建且已成功写入的课程，才能安全辨认旧重复日程。','先完成一次手动同步，再从菜单执行历史课程清理。'],
-  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','先恢复并完成同步，再执行历史重复课程清理。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看运行状态和备份，稍后重试「覆盖旧课程」；若旧课程是重复日程，可在 Apple 日历中选择删除整个重复系列。'],
+  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Schedule 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
+  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -1670,7 +1670,7 @@ async function loginPreflight(state,store,progress){
 }
 async function widget(store) {
   if(typeof ListWidget==='undefined'){
-    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不支持 Scriptable 样式 ListWidget');
+    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不提供旧版小组件接口，已跳过小组件输出');
     return;
   }
   const state=store.read(),w=new ListWidget(),now=Date.now(),local=new Date(now+8*3600000),day=local.toISOString().slice(0,10),mode=String(args.widgetParameter||'today');
