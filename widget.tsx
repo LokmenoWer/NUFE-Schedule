@@ -56,7 +56,9 @@ function CourseCard({course,compact=false,width,density='normal'}){
       {isSide?formatSideTitle(course.title):course.title}
     </Text>
     <Text font={isSide?sideDetailFont:detailSize} foregroundStyle={detailsColor}
-      lineLimit={2}>{isSide?course.startLabel+'\n'+course.endLabel:course.startLabel+'–'+course.endLabel}</Text>
+      lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}>
+      {course.startLabel+'–'+course.endLabel}
+    </Text>
     {course.location?<Text font={isSide?sideDetailFont:detailSize}
       foregroundStyle={detailsColor}
       lineLimit={2}>{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
