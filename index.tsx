@@ -1393,9 +1393,9 @@ const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
-  ENDPOINT_CONFIG:['接口地址不符合安全格式：必须使用指定的南京财经大学 HTTPS 域名，且学期接口必须包含一次 {sid}。','从「教务接口」重新填写或选择「恢复默认接口」。不必清理日历或账号密码。'],
-  ENDPOINT_UI:['Scripting 原生接口设置页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新进入「教务接口」。'],
-  ENDPOINT_STORAGE:['本机钥匙串未能成功保存或清除接口设置；未确认更改成功。','解锁 iPhone 后重新打开 Scripting，再次保存或恢复默认接口。'],
+  ENDPOINT_CONFIG:['接口地址不符合安全格式：必须使用指定的南京财经大学 HTTPS 域名，且学期接口必须包含一次 {sid}。','从「立即刷新」进入接口填写页，清空有问题的输入框即可恢复对应默认地址。无需清理日历或账号密码。'],
+  ENDPOINT_UI:['Scripting 原生刷新向导未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
+  ENDPOINT_STORAGE:['本机钥匙串未能成功保存或清除接口设置；未确认更改成功。','解锁 iPhone 后在 Scripting 中重新点击「立即刷新」；留空使用学校默认接口。'],
   TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
   EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
   LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
