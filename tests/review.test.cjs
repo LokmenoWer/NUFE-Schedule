@@ -189,6 +189,52 @@ test('widget mirroring fails safely if native Storage is absent or rejects write
 });
 test('single file loads all APIs without Scriptable or network',async()=>{const e=await env();a.equal(typeof e.m.run,'function');});
 test('school URL whitelist blocks credentials and other hosts',async()=>{const {m}=await env();for(const u of ['http://jwxt.nufe.edu.cn/','https://evil.test/','https://jwxt.nufe.edu.cn@evil.test/','https://jwxt.nufe.edu.cn:443/'])a.throws(()=>m.safeURL(u),code('DOMAIN_BLOCKED'));});
+test('CourseSync imports verified legacy lesson state without modifying original files',async()=>{
+  const e=await env();
+  const oldDir='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+  const newDir='/local/CourseSync/CourseSync-v2';
+  e.store.release();
+  e.files.set(oldDir,'directory');
+  const original=JSON.stringify({...e.state,lastCheck:'2026-11-02T06:00:00Z'});
+  const filename='state-0000000007.json';
+  e.files.set(oldDir+'/'+filename,original);
+  const migrated=new e.m.Store();
+  a.equal(migrated.read().calendarId,e.calendar.identifier);
+  a.equal(migrated.read().owner,e.state.owner);
+  a.equal(migrated.read().lastCheck,'2026-11-02T06:00:00Z');
+  a.equal(e.files.get(newDir+'/'+filename),original);
+  a.equal(e.files.get(oldDir+'/'+filename),original);
+});
+
+test('CourseSync never imports legacy state while an earlier sync still holds its lock',async()=>{
+  const e=await env();
+  const oldDir='/local/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+  e.store.release();
+  e.files.set(oldDir,'directory');
+  e.files.set(oldDir+'/state-0000000007.json',JSON.stringify(e.state));
+  e.files.set(oldDir+'/run-lock.json',JSON.stringify({token:'legacy',at:Date.now()}));
+  a.throws(()=>new e.m.Store(),code('BUSY'));
+  a.equal(e.files.has('/local/CourseSync/CourseSync-v2/state-0000000007.json'),false);
+});
+
+test('CourseSync migrates old device and iCloud Keychain aliases without deleting backups',async()=>{
+  const e=await env();
+  const legacyCloud=JSON.stringify({version:1,username:'legacy-test',password:'not-a-real-password'});
+  e.keys.set('NUFE.Local.v1.cookies','[]');
+  e.keys.set('NUFE.Local.v1.person','sample-person');
+  e.keys.set('NUFE.Schedule.v1.icloud-credentials',legacyCloud);
+  e.m.migrateLegacyKeychainData();
+  a.equal(e.keys.get('CourseSync.Local.v1.cookies'),'[]');
+  a.equal(e.keys.get('CourseSync.Local.v1.person'),'sample-person');
+  a.equal(e.keys.get('CourseSync.v1.icloud-credentials'),legacyCloud);
+  a.equal(e.keys.get('NUFE.Schedule.v1.icloud-credentials'),legacyCloud);
+  a.equal(e.keys.get('CourseSync.Local.v1.migrated'),'1');
+  // A post-migration change to the old namespace must never overwrite the new one.
+  e.keys.set('NUFE.Local.v1.cookies','legacy-new');
+  e.m.migrateLegacyKeychainData();
+  a.equal(e.keys.get('CourseSync.Local.v1.cookies'),'[]');
+});
+
 test('NUFE endpoint settings keep default URLs and validate academic paths',async()=>{
   const e=await env(),m=e.m,d=m.ENDPOINT_DEFAULTS;
   a.equal(m.loadEndpointSettings().table,d.table);
