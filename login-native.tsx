@@ -167,7 +167,7 @@ function SchoolEndpointView({initial}:{initial:NativeSchoolEndpoints}) {
           textInputAutocapitalization="never" autocorrectionDisabled={true}/>
       </Section>
       <Section header={<Text>课程数据接口</Text>}
-        footer={<Text>接口模板中的 {/**/}{'{sid}'} 代表学期 ID，必须保留，不需要填写具体数字。</Text>}>
+        footer={<Text>接口模板中的 {'{sid}'} 代表学期 ID，必须保留，不需要填写具体数字。</Text>}>
         <TextField title="学期详情" value={semester} onChanged={setSemester}
           textInputAutocapitalization="never" autocorrectionDisabled={true}/>
         <TextField title="课表数据" value={courses} onChanged={setCourses}
