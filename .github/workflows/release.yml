@@ -37,11 +37,11 @@ jobs:
           archive="dist/NUFE-Schedule.zip"
           if gh release view "$release_tag" >/dev/null 2>&1; then
             gh release upload "$release_tag" "$archive" --clobber
-            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "NUFE-Schedule" --notes-file docs/release-notes.md
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "CourseSync" --notes-file docs/release-notes.md
           else
             gh release create "$release_tag" "$archive" \
               --target "$GITHUB_SHA" \
-              --title "NUFE-Schedule" \
+              --title "CourseSync" \
               --notes-file docs/release-notes.md
           fi
 
