@@ -11,7 +11,11 @@ test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
   assert.equal(data.name,'NUFE-Schedule');
   assert.equal(data.version,'0.0.0');
-  assert.match(data.description,/NUFE/);
+  assert.match(data.description,/CourseSync/);
+  assert.equal(data.localizedNames.en,'CourseSync');
+  assert.equal(data.localizedNames.zh,'CourseSync');
+  // Keep Scripting's script identity and remote archive stable for installed users.
+  assert.equal(data.name,'NUFE-Schedule');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
   assert.equal(data.icon,'calendar');
 });
@@ -21,6 +25,13 @@ test('public-facing descriptions consistently use NUFE',()=>{
     const content=read(filename);
     assert.doesNotMatch(content,/南京财经大学|南财/,'unexpected school name in '+filename);
   }
+});
+
+test('README distinguishes public CourseSync name from legacy installation identity',()=>{
+  const readme=read('README.md');
+  assert.match(readme,/^# CourseSync$/m);
+  assert.match(readme,/底层脚本标识/);
+  assert.match(readme,/NUFE-Schedule/);
 });
 
 test('README explicitly states verification is limited to the NUFE academic system',()=>{
