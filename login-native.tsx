@@ -127,74 +127,109 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
 }
 
 
-// Advanced, native-only editing of the five school interface paths.
-// This view neither sends requests nor reads accounts or cookies.
-export type NativeSchoolEndpoints = {
-  auth: string;
-  sso: string;
-  table: string;
-  semester: string;
-  courses: string;
+// The manual refresh wizard uses one native sheet: endpoints first, then
+// account/password (or reuse of an existing trusted session). No web requests
+// or credential storage are performed by this UI.
+export type NativeSchoolEndpoints={
+  auth:string;
+  sso:string;
+  table:string;
+  semester:string;
+  courses:string;
 };
-type EndpointFormOutcome =
-  | {kind:'save',values:NativeSchoolEndpoints}
-  | {kind:'reset'};
+type RefreshFormOutcome=
+  | {kind:'credentials';values:NativeSchoolEndpoints;username:string;password:string}
+  | {kind:'reuse';values:NativeSchoolEndpoints};
 
-function SchoolEndpointView({initial}:{initial:NativeSchoolEndpoints}) {
+function RefreshSetupView({defaults,allowReuse}:{
+  defaults:NativeSchoolEndpoints;allowReuse:boolean;
+}){
   const dismiss=Navigation.useDismiss();
-  const [auth,setAuth]=useState(initial.auth);
-  const [sso,setSso]=useState(initial.sso);
-  const [table,setTable]=useState(initial.table);
-  const [semester,setSemester]=useState(initial.semester);
-  const [courses,setCourses]=useState(initial.courses);
-  const fields=[auth,sso,table,semester,courses];
-  const valid=fields.every(v=>v.trim().length>0&&v.trim().length<=220);
+  const [step,setStep]=useState<'endpoints'|'account'>('endpoints');
+  const [auth,setAuth]=useState('');
+  const [sso,setSso]=useState('');
+  const [table,setTable]=useState('');
+  const [semester,setSemester]=useState('');
+  const [courses,setCourses]=useState('');
+  const [username,setUsername]=useState('');
+  const [password,setPassword]=useState('');
+  const values={auth:auth.trim(),sso:sso.trim(),table:table.trim(),
+    semester:semester.trim(),courses:courses.trim()};
+  const validEndpoints=Object.values(values).every(v=>v.length<=220);
+  const account=username.trim();
+  const validAccount=account.length>0&&account.length<=100&&
+    password.length>0&&password.length<=512;
+  const back=()=>step==='endpoints'?dismiss(null):setStep('endpoints');
 
   return <NavigationStack>
-    <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
-      toolbar={{cancellationAction:
-        <Button title="取消" action={()=>dismiss(null)}/>}}>
-      <Section header={<Text>南京财经大学 · 连接地址</Text>}
-        footer={<Text>仅允许修改已验证学校域名内的 HTTPS 接口路径。修改后在下一次刷新时生效；此页面不会发起网络请求。</Text>}>
-        <TextField title="统一认证根地址" value={auth} onChanged={setAuth}
-          prompt="https://authserver.nufe.edu.cn/authserver"
-          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-        <TextField title="SSO 登录入口" value={sso} onChanged={setSso}
-          prompt="https://jwxt.nufe.edu.cn/student/sso/login"
-          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-        <TextField title="课表页面" value={table} onChanged={setTable}
-          prompt="https://jwxt.nufe.edu.cn/student/for-std/course-table"
-          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-      </Section>
-      <Section header={<Text>课程数据接口</Text>}
-        footer={<Text>接口模板中的 {'{sid}'} 代表学期 ID，必须保留，不需要填写具体数字。</Text>}>
-        <TextField title="学期详情" value={semester} onChanged={setSemester}
-          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-        <TextField title="课表数据" value={courses} onChanged={setCourses}
-          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-      </Section>
-      <Section>
-        <Button title="保存接口" disabled={!valid}
-          action={()=>{if(valid)dismiss({kind:'save',values:{
-            auth:auth.trim(),sso:sso.trim(),table:table.trim(),
-            semester:semester.trim(),courses:courses.trim()
-          }});}}/>
-        <Button title="恢复默认接口" action={()=>dismiss({kind:'reset'})}/>
-      </Section>
-    </List>
+    {step==='endpoints'?
+      <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
+        toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
+        <Section header={<Text>南京财经大学 · 默认接口</Text>}
+          footer={<Text>全部留空即可直接使用南京财经大学教务系统。仅接受学校可信 HTTPS 域名的接口路径。</Text>}>
+          <TextField title="统一认证根地址"
+            prompt={'留空默认使用 '+defaults.auth}
+            value={auth} onChanged={setAuth}
+            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+          <TextField title="SSO 登录入口"
+            prompt={'留空默认使用 '+defaults.sso}
+            value={sso} onChanged={setSso}
+            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+          <TextField title="课表页面"
+            prompt={'留空默认使用 '+defaults.table}
+            value={table} onChanged={setTable}
+            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        </Section>
+        <Section header={<Text>课程数据接口</Text>}
+          footer={<Text>学期 ID 由程序自动填写；自定义接口里的 {'{sid}'} 必须保留。此页不会访问网络。</Text>}>
+          <TextField title="学期详情"
+            prompt={'留空默认使用 '+defaults.semester}
+            value={semester} onChanged={setSemester}
+            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+          <TextField title="课表数据"
+            prompt={'留空默认使用 '+defaults.courses}
+            value={courses} onChanged={setCourses}
+            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        </Section>
+        <Section>
+          <Button title="下一步：账号密码" disabled={!validEndpoints}
+            action={()=>{if(validEndpoints)setStep('account');}}/>
+        </Section>
+      </List>:
+      <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
+        toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
+        <Section header={<Text>南京财经大学 · 统一身份认证</Text>}>
+          <TextField title="学号" prompt="请输入学号" value={username}
+            onChanged={setUsername} textContentType="username"
+            textInputAutocapitalization="never"/>
+          <SecureField title="密码" prompt="请输入密码" value={password}
+            onChanged={setPassword} textContentType="password"/>
+        </Section>
+        <Section footer={<Text>账号密码只会在学校要求重新认证时使用，认证成功后才会保存。可使用 iOS「密码」自动填充；切换账号请先退出原账号。</Text>}>
+          <Button title="开始刷新" disabled={!validAccount}
+            action={()=>{if(validAccount)dismiss({
+              kind:'credentials',values,username:account,password
+            });}}/>
+          {allowReuse?<Button title="使用现有登录信息继续"
+            action={()=>dismiss({kind:'reuse',values})}/>:null}
+        </Section>
+      </List>}
   </NavigationStack>;
 }
 
-export async function presentNativeEndpointForm(initial:NativeSchoolEndpoints):
-  Promise<EndpointFormOutcome|null> {
+export async function presentNativeRefreshForm(defaults:NativeSchoolEndpoints,
+  allowReuse=false):Promise<RefreshFormOutcome|null>{
   const result=await Navigation.present({
-    element:<SchoolEndpointView initial={initial}/>,
+    element:<RefreshSetupView defaults={defaults} allowReuse={allowReuse}/>,
     modalPresentationStyle:'pageSheet'
   });
-  if(result?.kind==='reset')return {kind:'reset'};
-  if(result?.kind!=='save'||!result.values)return null;
+  if(!result||!['credentials','reuse'].includes(result.kind))return null;
   const values=result.values;
-  if(!['auth','sso','table','semester','courses'].every(
-      key=>typeof values[key]==='string'&&values[key].length<=220))return null;
-  return {kind:'save',values};
+  if(!values||!['auth','sso','table','semester','courses'].every(
+    key=>typeof values[key]==='string'&&values[key].length<=220))return null;
+  if(result.kind==='reuse')return {kind:'reuse',values};
+  const username=typeof result.username==='string'?result.username.trim():'';
+  const password=typeof result.password==='string'?result.password:'';
+  if(!username||username.length>100||!password||password.length>512)return null;
+  return {kind:'credentials',values,username,password};
 }
