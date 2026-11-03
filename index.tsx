@@ -1,43 +1,46 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
+import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
+import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
-let __NUFE_BOOT_PHASE='初始化运行接口';
-async function __NUFE_REPORT_STARTUP(error){
+let __COURSESYNC_BOOT_PHASE='初始化运行接口';
+async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
   const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
-  const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
-  console.error('[NUFE-Schedule] '+known+' · '+__NUFE_BOOT_PHASE);
+  const message='阶段：'+__COURSESYNC_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
+  console.error('[CourseSync] '+known+' · '+__COURSESYNC_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
-  catch(_){try{await api('Notification').schedule({title:'NUFE 课表 · 启动失败',body:message,silent:true});}catch(__){}}
+  catch(_){try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
 }
 async function __NUFE_START(){
   try{
-    console.log('[NUFE-Schedule] 正在启动');
+    console.log('[CourseSync] 正在启动');
 // @ts-nocheck
 
-// NUFE-Schedule: foreground management and background shortcut synchronization.
+// CourseSync: foreground management and background shortcut synchronization.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
 const HostCalendar=hostAPI('Calendar')||{},HostEvent=hostAPI('CalendarEvent'),HostDialog=hostAPI('Dialog')||{};
 const HostNotification=hostAPI('Notification')||{},hostFetch=hostAPI('fetch');
+const HostStorage=hostAPI('Storage');
 const __query=HostScript.queryParameters||{};
 const __intent=hostAPI('Intent');
 let __intentText='';try{const p=__intent?.shortcutParameter;if(p?.type==='text')__intentText=String(p.value||'');}catch(_){}
 const __mode=String(__query.mode||__intentText||(HostScript.env==='index'?'menu':'sync')).trim().toLowerCase()==='menu'?'menu':'sync';
 let __shortcutOutput=null;
 const __webviews=new Set();
-const config={runsInApp:HostScript.env==='index',runsInWidget:false,runsWithSiri:true};
-const args={shortcutParameter:__mode==='menu'?'':'sync',widgetParameter:''};
+const config={runsInApp:HostScript.env==='index',runsWithSiri:true};
+const args={shortcutParameter:__mode==='menu'?'':'sync'};
 const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutput=String(value);},complete:()=>{
   for(const w of __webviews)try{w.dispose();}catch(_){}
   HostScript.exit(__intent?.text?__intent.text(__shortcutOutput||'处理完成'):__shortcutOutput);
 }};
 const FileManager={local:()=>({
-  libraryDirectory:()=>HostFiles.appGroupDocumentsDirectory+'/NUFE-Local-Scripting',
+  libraryDirectory:()=>HostFiles.appGroupDocumentsDirectory+'/CourseSync',
   joinPath:(a,b)=>a.replace(/\/$/,'')+'/'+b,
   fileExists:p=>HostFiles.existsSync(p),createDirectory:(p,r)=>HostFiles.createDirectorySync(p,r),
   listContents:p=>HostFiles.readDirectorySync(p,false).map(n=>String(n).split('/').pop()),readString:p=>HostFiles.readAsStringSync(p),
@@ -100,10 +103,12 @@ class Request{
  async loadString(){return this.execute(false);}async load(){return this.execute(true);}
 }
 class WebView{
- constructor(){this.inner=new (hostAPI('WebViewController'))({ephemeral:true});__webviews.add(this.inner);}
- set shouldAllowRequest(fn){this.inner.shouldAllowRequest=async req=>!!fn(req);}
+ constructor(){
+   const Controller=hostAPI('WebViewController');
+   if(typeof Controller!=='function')fail('WEBVIEW_UNAVAILABLE');
+   this.inner=new Controller({ephemeral:true});__webviews.add(this.inner);
+ }
  async loadHTML(html){if(!await this.inner.loadHTML(html))fail('WEBVIEW_LOAD_FAILED');}
- async evaluateJavaScript(js){return this.inner.evaluateJavaScript('return ('+js+');');}
  async present(title='NUFE 验证'){await this.inner.present({navigationTitle:title});}
 }
 class Notification{
@@ -128,10 +133,10 @@ const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
 // END SCRIPTING ADAPTER
 
 // SPDX-License-Identifier: GPL-3.0-only
-// NUFE-Schedule (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
+// CourseSync (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
 // upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
 // No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* NUFE-Schedule：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
+/* CourseSync：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
  * 使用 Scripting「运行意图脚本」触发同步，无需通过 URL 唤起 App。
  * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
  * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
@@ -142,14 +147,78 @@ const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
 'use strict';
 // This deployment is explicitly authorized for a disposable, dedicated timetable calendar.
 const REPLACE_DEDICATED_LEGACY = true;
-const AUTH = 'https://authserver.nufe.edu.cn/authserver';
-const JW = 'https://jwxt.nufe.edu.cn';
-const TABLE = JW + '/student/for-std/course-table';
-const SSO = JW + '/student/sso/login';
-const KEY = 'NUFE.Local.v1.cookies';
+const ENDPOINT_KEY='CourseSync.Local.v1.school-endpoints';
+const JW='https://jwxt.nufe.edu.cn';
+const ENDPOINT_DEFAULTS=Object.freeze({
+  auth:'https://authserver.nufe.edu.cn/authserver',
+  sso:JW+'/student/sso/login',
+  table:JW+'/student/for-std/course-table',
+  semester:JW+'/student/ws/semester/get/{sid}',
+  courses:JW+'/student/for-std/course-table/semester/{sid}/print-data'
+});
+let AUTH=ENDPOINT_DEFAULTS.auth;
+let SSO=ENDPOINT_DEFAULTS.sso;
+let TABLE=ENDPOINT_DEFAULTS.table;
+let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
+let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
+const SCHOOL_KEY='CourseSync.Local.v1.school';
+const SCHOOL_WHITELIST=Object.freeze([
+  Object.freeze({id:'nufe',name:'南京财经大学',endpoints:ENDPOINT_DEFAULTS})
+]);
+function schoolById(id){return SCHOOL_WHITELIST.find(s=>s.id===id)||null;}
+function loadSelectedSchool(){
+  try{
+    if(!Keychain.contains(SCHOOL_KEY))return 'nufe';
+    const id=Keychain.get(SCHOOL_KEY);
+    return schoolById(id)?id:'nufe';
+  }catch(_){return 'nufe';}
+}
+function activateSelectedSchool(id){
+  const school=schoolById(id);
+  assert(school,'SCHOOL_UNSUPPORTED');
+  activateEndpointSettings(school.endpoints);
+  return school;
+}
+const KEY = 'CourseSync.Local.v1.cookies';
 // Scripting Keychain is device/app-level credential storage; never store this key in JSON state.
-const CRED_KEY = 'NUFE.Local.v1.saved-login'; // Legacy device-only credential key.
-const CLOUD_CRED_KEY = 'NUFE.Schedule.v1.icloud-credentials';
+const CRED_KEY = 'CourseSync.Local.v1.saved-login'; // Legacy device-only credential key.
+const CLOUD_CRED_KEY = 'CourseSync.v1.icloud-credentials';
+// One-time, readback-verified migration from NUFE-Schedule's Keychain keys.
+// Originals remain available for rollback until the user explicitly logs out.
+const LEGACY_DEVICE_KEYS=Object.freeze([
+  [ENDPOINT_KEY,'NUFE.Local.v1.school-endpoints'],
+  [KEY,'NUFE.Local.v1.cookies'],
+  [CRED_KEY,'NUFE.Local.v1.saved-login'],
+  ['CourseSync.Local.v1.device','NUFE.Local.v1.device'],
+  ['CourseSync.Local.v1.person','NUFE.Local.v1.person'],
+  ['CourseSync.Local.v1.student','NUFE.Local.v1.student']
+]);
+const LEGACY_CLOUD_CRED_KEY='NUFE.Schedule.v1.icloud-credentials';
+const LEGACY_IMPORT_KEY='CourseSync.Local.v1.migrated';
+function migrateLegacyKeychainData(){
+  if(Keychain.contains(LEGACY_IMPORT_KEY))return;
+  try{
+    for(const [current,old] of LEGACY_DEVICE_KEYS){
+      if(Keychain.contains(current)||!Keychain.contains(old))continue;
+      const value=Keychain.get(old);
+      if(typeof value!=='string')fail('CREDENTIALS_INVALID');
+      Keychain.set(current,value);
+      if(Keychain.get(current)!==value)fail('CREDENTIALS_UNAVAILABLE');
+    }
+    if(!CloudKeychain.contains(CLOUD_CRED_KEY)&&CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY)){
+      const value=CloudKeychain.get(LEGACY_CLOUD_CRED_KEY);
+      if(typeof value!=='string')fail('CREDENTIALS_INVALID');
+      CloudKeychain.set(CLOUD_CRED_KEY,value);
+      if(CloudKeychain.get(CLOUD_CRED_KEY)!==value)fail('CREDENTIALS_UNAVAILABLE');
+    }
+    Keychain.set(LEGACY_IMPORT_KEY,'1');
+    if(Keychain.get(LEGACY_IMPORT_KEY)!=='1')fail('CREDENTIALS_UNAVAILABLE');
+  }catch(e){
+    if(e?.code==='CREDENTIALS_INVALID')throw e;
+    fail('CREDENTIALS_UNAVAILABLE');
+  }
+}
+
 function credentialRecord(raw){
   let saved;try{saved=JSON.parse(raw);}catch(_){fail('CREDENTIALS_INVALID');}
   if(!saved||saved.version!==1||typeof saved.username!=='string'||typeof saved.password!=='string'||
@@ -204,6 +273,10 @@ function removeSavedCredentials(){
     // Deleting a synchronized item also deletes the other devices' copies.
     if(CloudKeychain.contains(CLOUD_CRED_KEY))CloudKeychain.remove(CLOUD_CRED_KEY);
     if(Keychain.contains(CRED_KEY))Keychain.remove(CRED_KEY);
+    if(CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
+      CloudKeychain.remove(LEGACY_CLOUD_CRED_KEY);
+    if(Keychain.contains('NUFE.Local.v1.saved-login'))
+      Keychain.remove('NUFE.Local.v1.saved-login');
   }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
 }
 // The following is only a local read-back check, not proof that iCloud has
@@ -215,13 +288,12 @@ function credentialStorageStatus(){
     local=Keychain.contains(CRED_KEY);
     if(cloud)credentialRecord(CloudKeychain.get(CLOUD_CRED_KEY));
     if(local)credentialRecord(Keychain.get(CRED_KEY));
-  }catch(_){return '凭据不可读取或数据异常（未验证云同步）';}
-  if(cloud&&local)return '本机已读回 iCloud 可同步凭据，同时存在旧本机凭据（请核对迁移情况）';
-  if(cloud)return '本机已读回 iCloud 可同步凭据（其他设备尚未核验）';
+  }catch(_){return '凭据不可读取或数据异常';}
+  if(cloud&&local)return 'iCloud 可同步凭据已保存；检测到旧本机凭据，请检查迁移';
+  if(cloud)return 'iCloud 可同步凭据已保存';
   if(local)return '仅检测到本机旧凭据，尚未迁移至 iCloud';
   return '未保存账号密码';
 }
-function maskedAccount(username){const s=String(username||'');if(s.length<5)return '已设置（隐藏）';return s.slice(0,2)+'***'+s.slice(-2);}
 
 const DAY = 86400000;
 function fail(code) { const e = new Error(code); e.code = code; throw e; }
@@ -253,6 +325,71 @@ function resolveURL(base, loc) {
   for(const p of path.split('/')) { if(p==='..') parts.pop(); else if(p!=='.') parts.push(p); }
   const out='https://'+host+parts.join('/'); safeURL(out); return out;
 }
+// Local editable paths only: credentials never go to an untrusted host.
+function validateEndpointSettings(value) {
+  assert(value&&typeof value==='object'&&!Array.isArray(value),'ENDPOINT_CONFIG');
+  const result={};
+  for(const key of Object.keys(ENDPOINT_DEFAULTS)){
+    const raw=value[key];
+    assert(typeof raw==='string'&&raw===raw.trim()&&raw.length<=220,'ENDPOINT_CONFIG');
+    const template=key==='semester'||key==='courses';
+    assert(raw.split('{sid}').length===(template?2:1),'ENDPOINT_CONFIG');
+    const checked=template?raw.replace('{sid}','123'):raw;
+    assert(/^https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(checked)&&
+      !checked.slice(8).includes('//')&&
+      !checked.split('/').some(p=>p==='.'||p==='..'),'ENDPOINT_CONFIG');
+    let parsed;
+    try{parsed=safeURL(checked);}catch(_){fail('ENDPOINT_CONFIG');}
+    if(key==='auth')assert(parsed.host==='authserver.nufe.edu.cn'&&
+      /^\/authserver(?:\/|$)/.test(parsed.path),'ENDPOINT_CONFIG');
+    else assert(parsed.host==='jwxt.nufe.edu.cn'&&
+      /^\/student\//.test(parsed.path),'ENDPOINT_CONFIG');
+    result[key]=raw;
+  }
+  return result;
+}
+// Old manually edited endpoint overrides are deliberately ignored.
+function loadEndpointSettings(){return {...ENDPOINT_DEFAULTS};}
+function activateEndpointSettings(value){
+  const valid=validateEndpointSettings(value);
+  AUTH=valid.auth;SSO=valid.sso;TABLE=valid.table;
+  SEMESTER_ENDPOINT=valid.semester;COURSE_DATA_ENDPOINT=valid.courses;
+}
+function termEndpoint(template,sid){
+  const id=String(sid);
+  assert(/^\d{1,12}$/.test(id),'ENDPOINT_CONFIG');
+  const url=template.replace('{sid}',id);
+  safeURL(url);return url;
+}
+// Manual refresh wizard: blank endpoint fields explicitly choose the bundled
+// NUFE defaults. Never retain a hidden custom override when all are blank.
+async function prepareManualRefresh(state){
+  if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  const allowReuse=!state?.signedOut&&canOfferSignOut(state);
+  let response;
+  try{
+    response=await presentNativeRefreshForm(
+      SCHOOL_WHITELIST.map(s=>({id:s.id,name:s.name})),
+      loadSelectedSchool(),allowReuse);
+  }catch(_){fail('ENDPOINT_UI');}
+  if(!response)return null;
+  const school=schoolById(response.schoolId);
+  assert(school,'SCHOOL_UNSUPPORTED');
+  // Do not keep the old custom URLs alive in the background.
+  try{
+    Keychain.set(SCHOOL_KEY,school.id);
+    if(Keychain.get(SCHOOL_KEY)!==school.id)fail('ENDPOINT_STORAGE');
+    if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
+    if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
+  }catch(_){fail('ENDPOINT_STORAGE');}
+  activateSelectedSchool(school.id);
+  if(response.kind==='reuse')return {kind:'reuse'};
+  assert(response.kind==='credentials'&&typeof response.username==='string'&&
+    typeof response.password==='string'&&response.username.length<=100&&
+    response.password.length>0&&response.password.length<=512,'CREDENTIALS_INVALID');
+  return {kind:'credentials',username:response.username,password:response.password};
+}
+
 function topId(html, name) {
   const m = new RegExp('\\b'+name+'\\s*=\\s*\\{').exec(html); if(!m) return null;
   let depth=0, quote=null;
@@ -490,7 +627,33 @@ class HTTP {
   async json(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});if(safeURL(r.url).host==='authserver.nufe.edu.cn'||safeURL(r.url).path==='/student/login')fail('AUTH_REQUIRED');try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
   async authJSON(url,opt={}) {const r=await this.get(url,{ajax:true,...opt});try{return JSON.parse(r.text);}catch(_){fail('SCHEMA');}}
 }
-async function input(title,label,secure=false) {const a=new Alert();a.title=title;if(secure)a.addSecureTextField(label);else a.addTextField(label);a.addAction('继续');a.addCancelAction('取消');if(await a.presentAlert()<0)fail('CANCELLED');return a.textFieldValue(0);}
+async function legacyInput(title,label,secure=false) {
+  const a=new Alert();a.title=title;
+  if(secure)a.addSecureTextField(label);else a.addTextField(label);
+  a.addAction('继续');a.addCancelAction('取消');
+  if(await a.presentAlert()<0)fail('CANCELLED');
+  return a.textFieldValue(0);
+}
+async function input(title,label,secure=false,options={}) {
+  if(config.runsInApp&&typeof hostAPI('Navigation')?.present==='function'){
+    try {
+      const code=await presentNativeTextForm({
+        title,label,kind:secure?'secure':options.kind||'text',image:options.image||null
+      });
+      if(code===null)fail('CANCELLED');
+      return code;
+    }catch(e){
+      if(e?.code==='CANCELLED')throw e;
+      const recover=await HostDialog.confirm({
+        title:'原生输入窗口不可用',
+        message:'无法打开原生输入窗口。是否改用系统输入框继续？',
+        cancelLabel:'取消',confirmLabel:'使用系统输入框'
+      });
+      if(!recover)fail('CANCELLED');
+    }
+  }
+  return await legacyInput(title,label,secure);
+}
 async function confirm(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('确认');a.addCancelAction('取消');return await a.presentAlert()===0;}
 async function notice(title,message) {const a=new Alert();a.title=title;a.message=message;a.addAction('好');await a.presentAlert();}
 // Read known login-form inputs as inert text; no WebView, no embedded page scripts.
@@ -524,77 +687,44 @@ async function fieldsFrom(html,id) {
   for(const name of ['execution','lt'])if(!out[name]){const x=lookup('name',name);if(x)out[name]=x.value||'';}
   return out;
 }
-// Compact, local-only credential entry. No school webpage or third-party URL
-// is loaded. Password stays hidden and the ephemeral view is disposed promptly.
-// The form sends the result WHILE the WebView is still presented; accessing
-// the DOM after closing the sheet can hang because WebKit suspends detached views.
-// A legacy native prompt fallback keeps login usable if the WebView cannot load.
-async function fallbackCredentialForm({title='NUFE 登录',showRemember=false}={}){
-  const username=(await input(title,'NUFE 学号')).trim();
-  const password=await input(title,'NUFE 密码（安全输入）',true);
+// Passwords are entered in a native iOS sheet. No embedded HTML login page,
+// fake website domain, separate cookie store or duplicated credential bridge.
+async function fallbackCredentialForm({title='CourseSync 登录'}={}){
+  const username=(await legacyInput(title,'学号')).trim();
+  const password=await legacyInput(title,'密码（安全输入）',true);
   if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
-  const remember=showRemember&&await confirm('保存自动登录凭据？',
-    '将学号和密码保存到 iCloud 钥匙串，供 Cookie 失效时自动登录。');
-  return {username,password,remember};
+  return {username,password};
 }
-async function credentialForm({title='NUFE 登录',showRemember=false}={}){
-  let w=null;
-  try{
-    w=new WebView();
-    w.shouldAllowRequest=req=>String(req.url||'')==='about:blank';
-    let submitted=null;
-    // The bridge is the only path from this local HTML page to the host.
-    // Never persist or log the values returned by the bridge.
-    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
-    await bounded(w.inner.addScriptMessageHandler('nufeCredentials',async value=>{
-      if(submitted)return false;
-      if(!value||typeof value.username!=='string'||typeof value.password!=='string')return false;
-      const username=value.username.trim(),password=value.password;
-      if(!username||username.length>100||!password||password.length>512)return false;
-      submitted={username,password,remember:showRemember&&value.remember===true};
-      // Close only AFTER data crossed to native code. Do not evaluate JS
-      // in a view already dismissed / suspended by WebKit.
-      try{w.inner.dismiss();}catch(_){}
-      return true;
-    }),12000,'WEBVIEW_TIMEOUT');
-    const html=[
-      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
-      '<style>html{color-scheme:light dark}body{font:16px -apple-system,sans-serif;padding:18px 16px;color:CanvasText;background:transparent}',
-      'h2{font-size:20px;font-weight:600;margin:10px 0 22px}.label{display:block;font-size:14px;font-weight:600;margin:16px 0 7px}',
-      'input[type=text],input[type=password]{display:block;width:100%;box-sizing:border-box;font:17px -apple-system;padding:12px;border:1px solid #8888;border-radius:10px;background:Canvas;color:CanvasText}',
-      '.choice{display:flex;align-items:center;gap:10px;margin-top:20px;font-size:14px;line-height:1.4}.choice input{width:20px;height:20px;flex:none}',
-      'button{display:block;width:100%;background:#1769dd;color:white;font:600 17px -apple-system;padding:13px;border:0;border-radius:12px;margin-top:22px}',
-      'button:disabled{opacity:.55}.hint{font-size:13px;color:GrayText;line-height:1.5;margin-top:14px}</style></head><body>',
-      '<h2>NUFE 统一身份认证</h2>',
-      '<label class="label" for="account">学号</label><input id="account" type="text" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">',
-      '<label class="label" for="secret">密码</label><input id="secret" type="password" maxlength="512" autocomplete="off">',
-      showRemember?'<label class="choice"><input id="remember" type="checkbox">保存到 iCloud 钥匙串（自动登录）</label>':'',
-      '<button type="button" id="submit">确认</button>',
-      '<p class="hint" id="hint">点按「确认」提交；关闭页面则取消。</p>',
-      '<script>(function(){const button=document.getElementById("submit"),hint=document.getElementById("hint");',
-      'button.addEventListener("click",async()=>{const username=document.getElementById("account").value.trim(),password=document.getElementById("secret").value;',
-      'if(!username||!password){hint.textContent="请输入学号和密码。";return;}button.disabled=true;',
-      'try{const ok=await window.webkit.messageHandlers.nufeCredentials.postMessage({username,password,remember:!!document.getElementById("remember")?.checked});',
-      'if(!ok){hint.textContent="请检查输入内容。";button.disabled=false;}}',
-      'catch(_){hint.textContent="未能提交登录信息，请重试。";button.disabled=false;}});})();</script></body></html>'
-    ].join('');
-    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
-    await w.present(title);
-    if(!submitted)fail('CANCELLED');
-    return submitted;
-  }catch(e){
-    // A broken WebKit instance should not block all password logins.
-    // Only technical WebView errors use the two native secure prompts;
-    // a user cancellation never triggers fallback.
-    if(e&&['WEBVIEW_TIMEOUT','WEBVIEW_LOAD_FAILED','WEBVIEW_UNAVAILABLE'].includes(e.code)){
-      return await fallbackCredentialForm({title,showRemember});
+async function credentialForm({title='CourseSync 登录'}={}){
+  if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  let code='NATIVE_FORM_UNAVAILABLE';
+  if(typeof hostAPI('Navigation')?.present==='function'){
+    try{
+      const native=await presentNativeCredentialForm(title);
+      if(!native)fail('CANCELLED');
+      return native;
+    }catch(e){
+      if(e?.code==='CANCELLED')throw e;
+      if(typeof e?.code==='string'&&/^[A-Z0-9_]{1,40}$/.test(e.code))code=e.code;
     }
-    throw e;
-  }finally{
-    if(w){try{w.inner.dispose();}catch(_){}__webviews.delete(w.inner);}
   }
+  // The only fallback is still a native iOS Dialog (two secure prompts).
+  // Ask before showing them; never silently downgrade the combined form.
+  const consent=await HostDialog.confirm({
+    title:'原生登录窗口不可用',
+    message:'无法打开账号密码窗口（'+code+'）。是否改用系统安全输入框？',
+    cancelLabel:'取消登录',confirmLabel:'继续'
+  });
+  if(!consent)fail('CANCELLED');
+  return await fallbackCredentialForm({title});
+}
+function validSliderResult(value) {
+  if(!value||value.canvasLength!==280||!Number.isFinite(value.moveLength)||
+     value.moveLength<=0||value.moveLength>240)return false;
+  const tracks=value.tracks;
+  return Array.isArray(tracks)&&tracks.length>=2&&tracks.length<=1000&&
+    tracks.every(t=>t&&['a','b','c'].every(k=>Number.isFinite(t[k]))&&
+      t.a>=0&&t.a<=240&&Math.abs(t.b)<=800&&t.c>=0&&t.c<=600000);
 }
 async function humanSlider(http) {
   await http.get(AUTH+'/common/toSliderCaptcha.htl',{ajax:true});
@@ -602,17 +732,38 @@ async function humanSlider(http) {
   assert(typeof j.bigImage==='string'&&typeof j.smallImage==='string'&&j.bigImage.length<700000&&j.smallImage.length<700000,'CAPTCHA');
   const small=Array.from(Data.fromBase64String(j.smallImage).getBytes());const key=String.fromCharCode(...small.slice(-16));assert(/^[A-Za-z0-9]{16}$/.test(key),'CAPTCHA');
   const imageType=s=>s.startsWith('iVBOR')?'image/png':s.startsWith('/9j/')?'image/jpeg':fail('CAPTCHA');
-  const w=new WebView();w.shouldAllowRequest=r=>/^(?:about:blank|data:image\/(?:png|jpeg);base64,)/.test(String(r.url||''));
-  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动滑块，松开后点击右上角完成。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><p id="status"></p><script>
+  const w=new WebView();
+  let submitted=null;
+  try {
+    if(typeof w.inner.addScriptMessageHandler!=='function')fail('WEBVIEW_UNAVAILABLE');
+    await bounded(w.inner.addScriptMessageHandler('nufeSlider',payload=>{
+      // Local drag data is untrusted: reject malformed or oversized trajectories
+      // instead of encrypting arbitrary WebKit messages for the school server.
+      if(submitted||!validSliderResult(payload))return false;
+      submitted=payload;
+      try{w.inner.dismiss();}catch(_){}
+      return true;
+    }),12000,'WEBVIEW_TIMEOUT');
+  const html=`<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>body{font:17px -apple-system;padding:20px}#stage{position:relative;width:280px;height:155px}img{position:absolute;height:155px}#bg{width:280px}#piece{left:0}#track{position:relative;width:280px;height:44px;background:#ddd;margin-top:20px;touch-action:none}#knob{position:absolute;width:40px;height:44px;background:#2084ee;touch-action:none}</style><p>亲自拖动拼图滑块，松开后点击下方提交验证。</p><div id="stage"><img id="bg"><img id="piece"></div><div id="track"><div id="knob"></div></div><button id="submit" disabled type="button" style="margin-top:14px;padding:12px 22px;border-radius:10px;background:#238BFF;color:white;border:0">提交验证</button><p id="status"></p><script>
   const bg=document.getElementById('bg'),piece=document.getElementById('piece'),knob=document.getElementById('knob');
-  bg.onload=piece.onload=()=>{piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
+  bg.onload=piece.onload=()=>{if(!bg.naturalWidth||!piece.naturalWidth)return;piece.style.width=Math.max(0,piece.naturalWidth*280/bg.naturalWidth-2)+'px';};
   bg.src=${JSON.stringify('data:'+imageType(j.bigImage)+';base64,'+j.bigImage)};piece.src=${JSON.stringify('data:'+imageType(j.smallImage)+';base64,'+j.smallImage)};
   let active=false,x=0,y=0,lastAt=0,last=null,tracks=[];window.result=null;
-  knob.onpointerdown=e=>{e.preventDefault();knob.setPointerCapture(e.pointerId);active=true;x=e.clientX;y=e.clientY;lastAt=Date.now();last=null;tracks=[{a:0,b:0,c:0}];window.result=null;};
+  knob.onpointerdown=e=>{e.preventDefault();document.getElementById('submit').disabled=true;knob.setPointerCapture(e.pointerId);active=true;x=e.clientX;y=e.clientY;lastAt=Date.now();last=null;tracks=[{a:0,b:0,c:0}];window.result=null;};
   knob.onpointermove=e=>{if(!active)return;const dx=e.clientX-x,dy=e.clientY-y;if(dx<0||dx+40>280)return;knob.style.left=Math.max(0,dx-1)+'px';piece.style.left=dx+'px';const now=Date.now(),dt=now-lastAt;if(dt<20)return;const p={a:dx,b:dy,c:dt};if(last&&Math.hypot(p.a-last.a,p.b-last.b)<2)return;tracks.push(p);last=p;lastAt=now;};
-  knob.onpointerup=e=>{if(!active)return;active=false;const dx=e.clientX-x;if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击完成提交。';};knob.onpointercancel=()=>{active=false;window.result=null;};</script>`;
-  await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');await w.present();const result=await bounded(w.evaluateJavaScript('window.result'),12000,'WEBVIEW_TIMEOUT');assert(result&&result.tracks,'CANCELLED');
-  const sign=await encryptPassword(JSON.stringify(result),key);const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});assert(answer.errorCode===1,'CAPTCHA');
+  knob.onpointerup=e=>{if(!active)return;active=false;const dx=Math.max(0,Math.min(240,e.clientX-x));if(dx<=0)return;tracks.push({a:dx,b:e.clientY-y,c:Date.now()-lastAt});window.result={canvasLength:280,moveLength:dx,tracks};document.getElementById('status').textContent='已记录，请点击提交验证。';document.getElementById('submit').disabled=false;};knob.onpointercancel=()=>{active=false;window.result=null;document.getElementById('submit').disabled=true;};document.getElementById('submit').onclick=async()=>{if(!window.result)return;const button=document.getElementById('submit');button.disabled=true;try{const ok=await window.webkit.messageHandlers.nufeSlider.postMessage(window.result);if(!ok){button.disabled=false;document.getElementById('status').textContent='滑动数据无效，请重新拖动。';}}catch(_){button.disabled=false;}};</script>`;
+    await bounded(w.loadHTML(html),12000,'WEBVIEW_TIMEOUT');
+    await w.present();
+    if(!submitted)fail('CANCELLED');
+    const sign=await encryptPassword(JSON.stringify(submitted),key);
+    const answer=await http.authJSON(AUTH+'/common/verifySliderCaptcha.htl',{body:form({sign})});
+    assert(answer.errorCode===1,'CAPTCHA');
+  }finally{
+    // WebKit may suspend JS immediately after dismissal. Never evaluate
+    // JavaScript after present(), and always release the ephemeral controller.
+    try{w.inner.dispose();}catch(_){}
+    __webviews.delete(w.inner);
+  }
 }
 function reauthValue(html,key) {const m=new RegExp('"'+key+'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(html);return m?JSON.parse('"'+m[1]+'"'):'';}
 async function mfa(http,r) {
@@ -620,12 +771,14 @@ async function mfa(http,r) {
   const service=reauthValue(r.text,'service')||SSO;assert(service===SSO,'DOMAIN_BLOCKED');
   function endpoint(suffix, fallback){const m=new RegExp('["\']([^"\']*'+suffix.replace('.','\\.')+')["\']').exec(r.text);let u=m?m[1]:fallback;if(u.startsWith('/')&&!u.startsWith('/authserver/'))u=AUTH+u;else u=resolveURL(r.url,u);assert(safeURL(u).host==='authserver.nufe.edu.cn','DOMAIN_BLOCKED');return u;}
   if(type==='3') {
-    if(!await confirm('短信验证','学校要求短信验证，点击确认向绑定手机发送一次验证码。'))fail('CANCELLED');
     const j=await http.authJSON(endpoint('getDynamicCodeByReauth.do',AUTH+'/dynamicCode/getDynamicCodeByReauth.do'),{body:form({userName:reauthValue(r.text,'reAuthUserId'),authCodeTypeName:'reAuthDynamicCodeType'})});assert(['success','other_success'].includes(j.res),'MFA_SEND');
   }
-  const code=await input('学校二次认证',type==='3'?'短信验证码':'身份验证器动态口令');
+  const code=await input('学校二次认证',type==='3'?'短信验证码':'身份验证器动态口令',
+    false,{kind:type==='3'?'sms':'totp'});
   const data={service,reAuthType:type,isMultifactor:reauthValue(r.text,'isMultifactor')||'true',password:'',dynamicCode:type==='3'?code:'',uuid:'',answer1:'',answer2:'',otpCode:type==='10'?code:''};
-  if(reauthValue(r.text,'isSleepAccount')==='0')data.skipTmpReAuth=(await confirm('信任这台设备','是否在学校认证系统中信任这台 iPhone？'))?'true':'false';
+  // Use the school's existing trusted-device flag when offered. Only the
+  // school determines its lifetime; the script does not guarantee 180 days.
+  if(reauthValue(r.text,'isSleepAccount')==='0')data.skipTmpReAuth='true';
   const j=await http.authJSON(endpoint('reAuthSubmit.do',AUTH+'/reAuthCheck/reAuthSubmit.do'),{body:form(data)});assert(!['reAuth_failed','reAuth_unauthorized'].includes(j.code),'MFA_FAILED');
   await http.get(AUTH+'/login?'+form({service}));
 }
@@ -635,7 +788,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
   try {
     onStage('解析学校登录表单');
     const fields=await fieldsFrom(r.text,'pwdFromId');assert(fields,'LOGIN_SCHEMA');assert(fields.salt,'LOGIN_SALT_MISSING');assert(fields.execution,'LOGIN_EXECUTION_MISSING');
-    const deviceKey='NUFE.Local.v1.device';let device=Keychain.contains(deviceKey)?Keychain.get(deviceKey):uuid().replace(/-/g,'').toUpperCase();Keychain.set(deviceKey,device);
+    const deviceKey='CourseSync.Local.v1.device';let device=Keychain.contains(deviceKey)?Keychain.get(deviceKey):uuid().replace(/-/g,'').toUpperCase();Keychain.set(deviceKey,device);
     onStage('注册设备指纹');
     await http.get(AUTH+'/bfp/info?'+form({bfp:device,_:Date.now()}),{ajax:true});
     if(!http.jar.cookies.some(c=>c.name==='MULTIFACTOR_BROWSER_FINGERPRINT'))http.jar.set({name:'MULTIFACTOR_BROWSER_FINGERPRINT',value:device,domain:'authserver.nufe.edu.cn',hostOnly:true,path:'/',expires:0});
@@ -643,8 +796,29 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     const need=await http.authJSON(AUTH+'/checkNeedCaptcha.htl?'+form({username,_:Date.now()}));assert(typeof need.isNeed==='boolean','CAPTCHA');
     let captcha='';if(need.isNeed||/\b_badCredentialsCount\s*=\s*["']?0\b/.test(r.text)) {
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text))await humanSlider(http);
-      else {const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');await QuickLook.present(Image.fromData(image.text));captcha=await input('图形验证码','输入刚才图片中的字符');}
+      if(/\bcaptchaSwitch\s*=\s*["']?2\b/.test(r.text)){await onStage('等待图形验证');await humanSlider(http);}
+      else {
+        await onStage('等待图形验证');
+        const image=await http.get(AUTH+'/getCaptcha.htl?'+Date.now(),{binary:true});
+        assert(/^image\/(png|jpeg|gif)/.test(image.response.mimeType||''),'CAPTCHA');
+        // Keep the school image in memory. Show it together with the input
+        // in one native sheet when the Scripting UIImage API can decode it.
+        const UI=hostAPI('UIImage');
+        let rendered=null;
+        if(interactive&&config.runsInApp&&typeof UI?.fromData==='function'){
+          try{rendered=UI.fromData(image.text);}catch(_){}
+        }
+        if(rendered){
+          captcha=await input('图形验证码','输入图片中的字符',false,
+            {kind:'captcha',image:rendered});
+        }else{
+          // Older host versions still have the native image preview and
+          // native text input fallback; never silently omit the challenge.
+          await QuickLook.present(Image.fromData(image.text));
+          captcha=await input('图形验证码','输入刚才图片中的字符',false,
+            {kind:'captcha'});
+        }
+      }
     }
     onStage(interactive?'本机加密登录密码（原生安全随机数）':'使用 Keychain 凭据进行本机密码加密');
     const encrypted=await encryptPassword(password,fields.salt);password='';
@@ -652,7 +826,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     r=await http.get(r.url,{body:form({username,password:encrypted,captcha,rememberMe:'true',_eventId:'submit',cllt:'userNameLogin',dllt:'generalLogin',lt:fields.lt||'',execution:fields.execution})});
     if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
       if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-      await mfa(http,r);
+      await onStage('等待二次认证');await mfa(http,r);
     }else if(safeURL(r.url).host==='authserver.nufe.edu.cn'&&/\/login(?:\?|$)/.test(r.url)){
       fail(interactive?'LOGIN_FAILED':'AUTO_LOGIN_REJECTED');
     }
@@ -662,7 +836,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     return r.text;
   }finally{password='';}
 }
-async function coursePage(http,interactive,onStage=()=>{}) {
+async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
   onStage('尝试读取教务课表入口');
   let r;try{r=await http.get(TABLE);try{pageInfo(r.text);return r.text;}catch(_){}}catch(e){if(e.code!=='AUTH_REQUIRED')throw e;}
   // Explicit SSO is needed: student/login does not redirect itself to CAS.
@@ -671,7 +845,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
   if(safeURL(r.url).host!=='authserver.nufe.edu.cn') {r=await http.get(TABLE);pageInfo(r.text);return r.text;}
   if(/reAuthSubmit|isMultifactor=true/.test(r.text+' '+r.url)){
     if(!interactive)fail('AUTH_INTERACTIVE_REQUIRED');
-    await mfa(http,r);r=await http.get(TABLE);pageInfo(r.text);return r.text;
+    await onStage('等待二次认证');await mfa(http,r);onStage('认证完成后读取课表页面');r=await http.get(TABLE);pageInfo(r.text);return r.text;
   }
   if(!interactive){
     const saved=readSavedCredentials();
@@ -679,17 +853,67 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
-  onStage('等待输入学校登录信息');
-  const account=await credentialForm({title:'NUFE 登录',showRemember:true});
+  // Credentials were entered in the second step of the manual refresh sheet.
+  // Reuse takes the stored credentials only if the verified cookie has expired.
+  await onStage('等待输入学校登录信息');
+  let account=null,shouldSave=false;
+  if(manualAuth?.kind==='credentials'){
+    account=manualAuth;shouldSave=true;
+  }else if(manualAuth?.kind==='reuse'){
+    account=readSavedCredentials();
+  }
+  if(!account){
+    account=await credentialForm({title:'CourseSync 登录'});
+    shouldSave=true;
+  }
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
-  // Save only after school confirms authentication succeeded.
-  if(account.remember)saveCredentials(account.username,account.password);
+  // Save only AFTER the school confirms successful authentication.
+  if(shouldSave)saveCredentials(account.username,account.password);
+  if(manualAuth?.kind==='credentials')manualAuth.password='';
   return page;
 }
 // Immutable generation files: a new file is written and read back before old versions
 // are pruned. Corrupt latest generation fails closed; it never becomes an empty state.
 class Store {
-  constructor() {this.fm=FileManager.local();this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'NUFE-Local-Scripting-v2');if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);this.token=null;this.generation=0;}
+  constructor() {
+    this.fm=FileManager.local();
+    this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'CourseSync-v2');
+    if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);
+    this.token=null;this.generation=0;this.lastHeartbeat=0;
+    this.migrateLegacyState();
+  }
+  migrateLegacyState(){
+    const states=()=>this.fm.listContents(this.dir)
+      .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();
+    if(states().length)return;
+    const legacy=HostFiles.appGroupDocumentsDirectory+
+      '/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+    if(!this.fm.fileExists(legacy))return;
+    let oldNames;
+    try{oldNames=this.fm.listContents(legacy)
+      .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();}
+    catch(_){fail('STATE_CORRUPT');}
+    if(!oldNames.length)return;
+    const lock=legacy+'/run-lock.json';
+    if(this.fm.fileExists(lock)){
+      try{
+        const owner=JSON.parse(this.fm.readString(lock));
+        if(Number.isFinite(owner?.at)&&Date.now()-owner.at<20*60000)
+          fail('BUSY');
+      }catch(e){if(e?.code==='BUSY')throw e;fail('LOCK_CORRUPT');}
+    }
+    const last=oldNames[oldNames.length-1];
+    let original;
+    try{
+      original=this.fm.readString(legacy+'/'+last);
+      assert(typeof original==='string'&&original.length<4*1024*1024,'STATE_CORRUPT');
+      validateState(JSON.parse(original));
+    }catch(_){fail('STATE_CORRUPT');}
+    const target=this.path(last);
+    this.fm.writeString(target,original);
+    assert(this.fm.readString(target)===original,'STATE_WRITE');
+    // The original files remain untouched to permit an explicit rollback.
+  }
   path(n){return this.fm.joinPath(this.dir,n);}
   read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},minutes:10,failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
   write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);this.fm.writeString(this.path(name),text);assert(this.fm.readString(this.path(name))===text,'STATE_WRITE');const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
@@ -704,6 +928,57 @@ class Store {
       try{const r=JSON.parse(this.fm.readString(cancel));if(r.token!==token)this.fm.remove(cancel);}catch(_){}
     }
     this.check();
+  }
+  // A lightweight, token-scoped activity mark. It does not extend the lock's
+  // original 20-minute maximum lifetime, but distinguishes a responsive owner
+  // from a suspended/killed task while the user requests cancellation.
+  heartbeat(){
+    const now=Date.now();
+    if(!this.token||now-this.lastHeartbeat<10000)return;
+    try{
+      this.fm.writeString(this.path('run-heartbeat.json'),
+        JSON.stringify({token:this.token,at:now}));
+      this.lastHeartbeat=now;
+    }catch(_){} // Diagnostics must never interrupt verified calendar writes.
+  }
+  // Only a user-requested cancellation of the SAME token may take over a
+  // demonstrably unresponsive task. Never blindly delete a healthy live lock.
+  recoverStalledCancellation(minIdleMs=90000){
+    const p=this.path('run-lock.json'),cancel=this.path('run-cancel.json');
+    if(!this.fm.fileExists(p)||!this.fm.fileExists(cancel))return false;
+    let raw,l,c;
+    try{raw=this.fm.readString(p);l=JSON.parse(raw);c=JSON.parse(this.fm.readString(cancel));}
+    catch(_){return false;}
+    if(!l||typeof l.token!=='string'||!Number.isFinite(l.at)||
+      !c||c.token!==l.token||!Number.isFinite(c.at))return false;
+    // A fresh cancellation must be requested by the foreground user.
+    if(Date.now()-c.at>5*60000||c.at<l.at)return false;
+    const heartbeatFile=this.path('run-heartbeat.json');
+    let hbRaw=null,hb=null;
+    try{if(this.fm.fileExists(heartbeatFile)){
+      hbRaw=this.fm.readString(heartbeatFile);hb=JSON.parse(hbRaw);
+    }}catch(_){return false;}
+    let lastActivity=l.at;
+    if(hb&&hb.token===l.token&&Number.isFinite(hb.at))
+      lastActivity=Math.max(lastActivity,hb.at);
+    // Fast path: an actively pulsing writer is not an orphan. Avoid parsing
+    // multi-year local state on every polling iteration.
+    if(Date.now()-lastActivity<Math.max(60000,minIdleMs))return false;
+    // Legacy installations do not yet write a heartbeat. The last recorded
+    // sync stage is another reliable sign that the previous run is moving.
+    try{const state=this.read();const stageAt=Date.parse(state.lastStageAt||'');
+      if(Number.isFinite(stageAt)&&stageAt>=l.at)lastActivity=Math.max(lastActivity,stageAt);
+    }catch(_){return false;} // Never take over if state is unreadable.
+    if(Date.now()-lastActivity<Math.max(60000,minIdleMs))return false;
+    // Another owner could have refreshed the mark while we inspected state.
+    try{
+      if(!this.fm.fileExists(p)||this.fm.readString(p)!==raw)return false;
+      if(hbRaw!==null&&this.fm.readString(heartbeatFile)!==hbRaw)return false;
+      const staged=this.path('orphan-lock-'+l.token+'.tmp');
+      this.fm.move(p,staged); // Atomic rename, never delete a different token.
+      try{this.fm.remove(staged);}catch(_){}
+      return true;
+    }catch(_){return false;}
   }
   // Cancellation is a cooperative handoff, not a forced termination. The old
   // task must acknowledge it at its next existing safety checkpoint.
@@ -730,6 +1005,7 @@ class Store {
       let r=null;try{r=JSON.parse(this.fm.readString(cancel));}catch(_){}
       if(r&&r.token===this.token)fail('SYNC_SUPERSEDED');
     }
+    this.heartbeat();
   }
   release(){
     if(!this.token)return;
@@ -740,10 +1016,15 @@ class Store {
         if(this.fm.fileExists(cancel)){
           try{if(JSON.parse(this.fm.readString(cancel)).token===this.token)this.fm.remove(cancel);}catch(_){}
         }
+        const heartbeatFile=this.path('run-heartbeat.json');
+        if(this.fm.fileExists(heartbeatFile)){
+          try{if(JSON.parse(this.fm.readString(heartbeatFile)).token===this.token)
+            this.fm.remove(heartbeatFile);}catch(_){}
+        }
         this.fm.remove(p);
       }
     }catch(_){}
-    this.token=null;
+    this.token=null;this.lastHeartbeat=0;
   }
 }
 function validateRecords(events,code='STATE_CORRUPT') {
@@ -897,21 +1178,22 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
 
 function fingerprint(events){return JSON.stringify(events.map(({id,...e})=>e));}
 function deletionReady(previous,events,now){return previous&&previous.signature===fingerprint(events)&&now-previous.at>=5*60000;}
-async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='NUFE 课表';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
+async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='CourseSync';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
 
 // Session invalidation is known only after a school's request redirects to auth.
 // Deduplicate the alert for this expired session: each scheduled run must not nag.
 async function notifyAuthExpiredOnce(state,store) {
   if(state.authExpiryNotifiedAt)return false;
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
-  n.title='NUFE 课表 · 登录已失效';
   const code=state.lastError;
+  n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'CourseSync · 登录需要处理':'CourseSync · 登录已失效';
   n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表已保留，请打开 Scripting 手动验证。':
     code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表已保留，请在 Scripting 中更新凭据。':
     code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课表已保留，请在 Scripting 中检查凭据设置。':
     code==='ACCOUNT_CHANGED'?'自动登录使用的账号与原课表绑定账号不一致。程序已停止写入；请在 Scripting 中核对学号。':
     code==='WEBVIEW_TIMEOUT'?'Cookie 失效后本地密码加密组件未能及时响应。课表已保留，请打开 Scripting 前台手动同步。':
-    '学校会话已失效；未能自动登录。课表已保留，请在 Scripting 中检查凭据或手动登录。';
+    code==='AUTH_REQUIRED'?'学校会话已失效，且未找到可用自动登录凭据。课表已保留，请打开 Scripting 手动登录。':
+    '自动登录未能完成。课表已保留，请在 Scripting 中检查登录状态或完成认证。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
   state.authExpiryNotifiedAt=new Date().toISOString();state.authNoticeError=null;
@@ -919,7 +1201,7 @@ async function notifyAuthExpiredOnce(state,store) {
 }
 async function testAuthNotification() {
   const n=new Notification();n.identifier='nufe-local-auth-test';
-  n.title='NUFE 课表 · 通知测试';
+  n.title='CourseSync · 通知测试';
   n.body='这是一条测试通知。学校会话失效后，定时同步会提醒你手动重新登录。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
@@ -1067,6 +1349,45 @@ async function reminders(state) {
   const pending=await Notification.allPending();const stale=pending.filter(n=>n.identifier.startsWith(prefix)&&!want.has(n.identifier));if(stale.length)await Notification.removePending(stale.map(n=>n.identifier));
   for(const e of desired){const id=prefix+e.id,when=Date.parse(e.start)-state.minutes*60000,body=e.title+' · '+localDateTime(e.start)+' · '+e.location;const old=pending.find(n=>n.identifier===id);if(old&&old.body===body&&old.nextTriggerDate&&Math.abs(+old.nextTriggerDate-when)<1000)continue;const n=new Notification();n.identifier=id;n.title='课程即将开始';n.body=body;n.sound='default';n.setTriggerDate(new Date(when));await n.schedule();}
 }
+// Minimal, private same-project cache for widget.tsx. In some Scripting
+// widget extensions the FileManager App Group path is unavailable even though
+// the main script can access its files. Storage has a per-script domain that
+// survives separate index/widget executions, so never use shared:true here.
+// No account, student ID, cookies, keys or calendar identifiers are copied.
+const WIDGET_CACHE_KEY='CourseSync.Widget.Courses.v1';
+function widgetCacheProjection(state,now=Date.now()){
+  if(!state||!state.semesters||typeof state.semesters!=='object')return null;
+  if(state.tx||!state.lastCheck)return null;
+  const earliest=now-8*DAY,latest=now+70*DAY,courses=[];
+  for(const term of Object.values(state.semesters)){
+    if(!term||!Array.isArray(term.events))continue;
+    for(const e of term.events){
+      if(!e||typeof e.title!=='string'||typeof e.start!=='string'||typeof e.end!=='string')continue;
+      const start=Date.parse(e.start),end=Date.parse(e.end);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
+         end<earliest||start>latest)continue;
+      courses.push({
+        id:String(e.id||'').slice(0,100),
+        title:e.title.slice(0,90),
+        location:String(e.location||'').slice(0,65),
+        teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
+          .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
+          .join('、').slice(0,75),
+        start:e.start,end:e.end
+      });
+      if(courses.length>400)return null; // Never silently truncate classes.
+    }
+  }
+  return {version:1,lastCheck:state.lastCheck,events:courses};
+}
+function publishWidgetCache(state,now=Date.now()){
+  const storage=HostStorage;
+  if(!storage||typeof storage.set!=='function')return false;
+  try{
+    const payload=widgetCacheProjection(state,now);
+    return !!(payload&&storage.set(WIDGET_CACHE_KEY,payload)===true);
+  }catch(_){return false;} // Must never fail the verified calendar sync.
+}
 function localDateTime(iso){return new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,16).replace('T',' ');}
 function ics(events,stamp=new Date().toISOString()) {
   const esc=s=>String(s).replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/;/g,'\\;').replace(/,/g,'\\,');
@@ -1075,10 +1396,14 @@ function ics(events,stamp=new Date().toISOString()) {
   for(const e of events)lines.push('BEGIN:VEVENT','UID:'+e.id+'@nufe-local','DTSTAMP:'+date(stamp),'DTSTART:'+date(e.start),'DTEND:'+date(e.end),'SUMMARY:'+esc(e.title),'LOCATION:'+esc(e.location),'DESCRIPTION:'+esc(typeof e.description==='string'?e.description:'教师：'+e.teachers.join('、')),'END:VEVENT');
   lines.push('END:VCALENDAR');return lines.map(line=>{let result='',part='',n=0;for(const c of line){const bytes=utf8(c).length;if(n+bytes>75){result+=part+'\r\n';part=' ';n=1;}part+=c;n+=bytes;}return result+part;}).join('\r\n')+'\r\n';
 }
-const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请在本脚本菜单在「账号与日历设置」选择「重新绑定课表日历」；不会自动创建或覆盖日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
+const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些课程由本脚本管理。',CLEANUP_TX_PENDING:'上次课表写入事务仍未完成，请先恢复同步。',CLEANUP_BACKUP_FAILED:'清理前的备份文件写入失败，已停止删除。',AUTH_REQUIRED:'登录态已失效或需要验证，请解锁并在 Scripting 内重新登录。旧课表已保留。',LOGOUT_INCOMPLETE:'退出登录尚未完成：部分会话或保存的凭据无法清除。后台自动登录已暂停，请解锁后重试。',LOGIN_FAILED:'登录未完成：请检查账号密码，或重新运行完成学校验证。不会自动重试密码。',LOGIN_SCHEMA:'学校登录页面结构已变化，已停止提交。',MFA_UNSUPPORTED:'学校要求了当前不支持的二次认证方式。请使用学校官方渠道完成认证，或联系维护者适配。',MFA_FAILED:'二次认证未通过，请重新运行。',MFA_SEND:'学校未发送验证码，请稍后重新运行。',CAPTCHA:'验证码未通过或数据结构变化，请重新运行并亲自验证。',SCHEMA:'学校数据不完整或结构变化，未用它覆盖旧课表。',TIME_MISSING:'课程缺少可靠起止时间，已保留旧课表。',ANCHOR:'缺少经确认的第一教学周周一日期，请前台运行设置校历。',STATE_CORRUPT:'最新本地状态损坏。已停止同步；请保留文件并联系维护者，不要删除缓存。',NETWORK:'网络连接失败，旧课表已保留。',NETWORK_TIMEOUT:'学校请求等待超过 25 秒。可查看状态中的最后请求阶段；旧课表已保留。',WEBVIEW_TIMEOUT:'本机输入界面未及时响应，已终止等待。',BUSY:'已有同步正在运行。本次不会并发修改日历；请等待前次完成。',LOCK_CORRUPT:'同步锁文件已损坏。请保留本地状态文件以便排查。',DOMAIN_BLOCKED:'请求指向未经允许的地址，已阻止。',ACCOUNT_CHANGED:'检测到其他账号，已停止同步。请使用原账号；本版不自动切换账号。',REVIEW:'存在需人工核对的课程变动，请在 Scripting 内运行。',CALENDAR_MISSING:'保存的日历绑定无法匹配。请前台执行「立即刷新」，按提示重新指定原日历；不会未经确认切换目标日历。',CALENDAR_NOT_VISIBLE:'Scripting 看不到可写入的「课表」日历。请在 iPhone 设置中给 Scripting「日历完全访问」权限，再重试。',CALENDAR_PERMISSION:'读取 iPhone 日历列表失败。请在设置中允许 Scripting 完全访问日历。',CALENDAR_REBIND_UNSAFE:'无法安全重新绑定：旧日历可能有未完成事务或已导入课程在新日历中不可见。为避免重复课程，未改变绑定。',BUDGET:'本次执行预算已用尽。下次运行将从已保存的事务继续。',DUPLICATE_SOURCE:'学校返回无法区分的重复课程，已保留旧课表。',CANCELLED:'已取消。',MARKER_CORRUPT:'日历课程身份信息校验失败，请保留本地状态及备份，不要删除或重建课表日历。'};
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
+  SCHOOL_UNSUPPORTED:['学校不在当前支持名单中，已停止请求且未修改课表。','从「立即刷新」的学校下拉菜单中选择已支持的学校。'],
+  ENDPOINT_CONFIG:['学校预设接口格式异常，已停止请求。','请更新 CourseSync 或联系维护者检查学校接口配置。'],
+  ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
+  ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后重新点击「立即刷新」，选择学校重试。'],
   TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
   EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
   LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
@@ -1098,15 +1423,16 @@ const ERROR_GUIDE={
 
   COOKIE_DOMAIN:['学校响应包含与当前认证域名不匹配的 Cookie，安全校验拒绝接收；它可能是学校配置问题，也可能是旧脚本解析兼容问题。','更新脚本以安全跳过无效 Cookie，同时保留域名验证。不要关闭域名校验或分享 Cookie 内容。'],
   COOKIE_FORMAT:['学校响应包含格式异常的 Cookie，无法安全解析。','保留最近阶段记录供适配；不要上传含 Cookie 值的网络请求日志。'],
-  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先运行「登录页面自检（无需密码）」；若仍失败，请保留诊断信息，不要反复提交密码。'],
-  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','运行「登录页面自检（无需密码）」并检查是否进入学校官方登录页。'],
-  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','运行「登录页面自检（无需密码）」；若持续发生，需要适配学校页面。'],
+  LOGIN_SCHEMA:['学校返回的登录页面没有符合预期的密码认证表单；可能是页面升级、额外验证页或接口返回异常。','先在 Safari 核对学校官方登录页是否正常；若仍失败，请保留「运行状态」中的错误代码，不要反复提交密码。'],
+  LOGIN_SALT_MISSING:['登录表单缺少 pwdEncryptSalt（密码加密盐）；不能安全生成学校要求的加密密码。','在 Safari 检查学校官方登录页是否正常；如持续失败，请保留「运行状态」中的错误代码供适配。'],
+  LOGIN_EXECUTION_MISSING:['学校登录表单缺少 execution 认证流水字段，无法可靠提交登录请求。','在 Safari 检查学校官方登录页；若持续失败，请记录「运行状态」中的错误代码供适配。'],
   LOGIN_FAILED:['学校没有确认登录成功；可能是密码不正确、验证码失败或登录页面变化，无法单凭此代码确定。','先在 Safari 验证学校账号是否能登录，再使用本程序。'],
-  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','从「账号与日历设置」选择「自动登录凭据」保存到 iCloud 钥匙串，或手动登录。'],
+  AUTH_REQUIRED:['学校登录 Cookie 已失效，而且尚未配置自动登录凭据。','点击「立即刷新」通过原生界面重新登录，学校确认认证成功后才会自动保存账号密码。'],
   AUTH_INTERACTIVE_REQUIRED:['Cookie 过期后自动登录时，学校要求图形验证码、滑块或二次认证。脚本不会绕过这些验证。','打开 Scripting 手动完成学校验证；成功后定时同步会继续。'],
-  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再在「账号与日历设置 → 自动登录凭据」中更新密码；不要频繁尝试。'],
-  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','从「账号与日历设置 → 自动登录凭据」删除并重新保存凭据。'],
-  CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台运行；检查保存的自动登录凭据。'],
+  AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再从主菜单点击「立即刷新」并手动重新登录；不要频繁尝试。'],
+  CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「立即刷新」使用原生界面重新登录。'],
+  CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台重试；部分凭据操作可能不可用。'],
+  LOGOUT_INCOMPLETE:['退出时未能完全清除本机 Cookie 或同步的脚本凭据；已阻止后台继续登录。','解锁 iPhone 并检查 iCloud 钥匙串，再打开 CourseSync 重试「退出登录」。课表数据不会删除。'],
   WEBVIEW_TIMEOUT:['Scripting 的本机输入界面超时。脚本将优先改用系统安全输入框；不能认定账号密码有误。','如果系统安全输入仍无法完成，请重新打开 Scripting 后再试。'],
   NETWORK_TIMEOUT:['一个学校网络请求等待超过 25 秒，没有得到完整响应。','检查 Wi-Fi、蜂窝网络或 VPN，稍后单次重试。'],
   NETWORK_CHAIN_TIMEOUT:['登录/数据请求涉及多次跳转，整组请求超过 75 秒。','检查当前网络是否能打开学校登录入口，并保留阶段日志。'],
@@ -1115,10 +1441,16 @@ const ERROR_GUIDE={
   NETWORK_TLS:['学校连接遇到证书或 TLS 校验问题。','检查系统时间和 HTTPS 代理设置；不要关闭证书验证。'],
   NETWORK_LOST:['学校网络连接中途断开。','检查网络稳定性后重试。'],
   NETWORK:['网络请求失败，但系统没有返回可安全区分的具体原因。','尝试 Safari 打开学校登录入口，切换网络后单次重试。'],
+  HTTP_429:['学校服务返回请求过于频繁（429）。','暂停手动刷新，等待学校解除限流后再尝试。'],
+  TOO_LARGE:['学校返回的数据超过脚本安全处理上限，未继续解析或覆盖课表。','保留当前课表和错误代码，等待检查接口返回内容。'],
+  CRYPTO:['学校密码加密所需参数无效，未提交登录密码。','检查认证页面是否发生变化，保留错误代码供适配。'],
+  CALENDAR_READONLY:['当前绑定日历不可写入或与保存的日历不一致。','从主菜单「立即刷新」重新指定原日历；不要直接删除旧日历。'],
+  CALENDAR_NOT_ICLOUD:['已创建日历，但无法确认它属于 iCloud。为了避免写入其他账户，本次没有绑定或导入课程。','请在 Apple 日历确认新建日历的账户来源，必要时手工创建 iCloud 日历。由于 Scripting 不支持指定精确账户，请保留现有日历，避免重复创建。'],
+  CALENDAR_NAME:['日历名称为空、过长或包含不支持的字符。','请输入 1～60 字符的自定义日历名称。'],
   DOMAIN_BLOCKED:['认证跳转到了程序安全名单之外的域名。程序为了保护账号主动阻止了连接。','不要绕过限制；需要人工核实学校新认证域名后才能更新白名单。'],
   REDIRECT:['学校登录跳转缺少目标地址、出现循环或达到上限。','检查学校登录是否正常；保留诊断报告供适配。'],
   CAPTCHA:['验证码结果不符合预期，或学校返回的验证码结构发生变化。','重新运行并亲自完成学校验证码；避免反复提交。'],
-  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','在「账号与日历设置」选择「重新绑定课表日历」，不要删除原日历。'],
+  CALENDAR_MISSING:['之前保存的日历 ID 与当前日历不匹配，程序无法安全写入。','从主菜单「立即刷新」重新指定原日历；不要删除旧日历。'],
   CALENDAR_PERMISSION:['iOS 阻止读取日历列表或日历访问接口失败。','在 iPhone 设置中将 Scripting 的「日历」权限改为「完全访问」；若开启了单脚本权限，也要允许本脚本访问日历。'],
   CALENDAR_CREATE_FAILED:['无法自动新建「课表」日历。','确认 Scripting 拥有日历「完全访问」权限，或在日历 App 中手动新建名为「课表」的日历后重试。'],
   CALENDAR_NOT_VISIBLE:['没有找到可写入的「课表」日历。','检查日历 App 中是否存在该日历及 Scripting 的完全访问权限。'],
@@ -1134,9 +1466,9 @@ const ERROR_GUIDE={
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
-  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Schedule 创建且已成功写入的课程，才能安全辨认旧重复日程。','先完成一次手动同步，再从菜单执行历史课程清理。'],
-  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','先恢复并完成同步，再执行历史重复课程清理。'],
-  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看运行状态和备份，稍后重试「覆盖旧课程」；若旧课程是重复日程，可在 Apple 日历中选择删除整个重复系列。'],
+  CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
+  CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
+  CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
   ACCOUNT_CHANGED:['当前认证账号与原课表账号不一致，程序主动阻止覆盖。','切换回原账号；不要直接覆盖旧日历。'],
   CANCELLED:['用户取消了当前操作，没有继续提交。','需要时重新进入菜单即可。'],
@@ -1163,11 +1495,53 @@ function stampStage(state,store,stage){
   state.stageHistory=[...(state.stageHistory||[]),{at,stage}].slice(-30);
   store.write(state);
   // Console is safe: stage strings and requestLabel never contain secrets.
-  if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[NUFE] '+stage);
+  if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
-// One local reminder if a non-interactive step takes unusually long. No repeated notification spam.
+// A foreground-only, local progress sheet. Stages are genuine completed
+// operations, not invented percentages. Keep it out of shortcut automations.
+// Native login, captcha and MFA must remain unobstructed by this sheet.
 function createProgress(state,store,interactive){
-  const stage=message=>stampStage(state,store,message);stage.finish=()=>{};return stage;
+  // Every detailed stage is still persisted for diagnostics. The native
+  // progress sheet is intentionally not a fake percent-based progress bar.
+  let ui=null,closed=false,started=false,waitingForVerification=false;
+  const stage=message=>{
+    stampStage(state,store,message);
+    if(!interactive||closed||!started||!ui)return;
+    const label=String(message||'');
+    if(/等待输入学校登录信息|等待图形验证|等待二次认证/.test(label)){
+      waitingForVerification=true;
+      // Caller awaits the native sheet dismissal before presenting another.
+      return ui.pause();
+    }
+    if(waitingForVerification){
+      // Never flash the sheet between captcha, SMS and login HTTP requests.
+      if(!/^(认证完成后读取课表页面|读取学期|请求学期|写入学期|核对旧|扫描专用日历)/.test(label))return;
+      waitingForVerification=false;
+      ui.resume();
+    }
+  };
+  stage.start=async()=>{
+    if(!interactive||started||closed)return;
+    started=true;
+    try{
+      if(typeof hostAPI('Navigation')?.present!=='function')return;
+      ui=createNativeProgressView();
+      ui.show();
+      // Yield to iOS once before network work; never block on modal dismissal.
+      await new Promise(resolve=>Timer.schedule(100,false,resolve));
+    }catch(_){
+      // A progress display failure must never turn a valid calendar sync into
+      // a failure or trigger a second, overlapping progress window.
+      ui=null;
+    }
+  };
+  stage.finish=()=>{
+    if(closed)return;
+    closed=true;
+    try{ui?.finish();}catch(_){}
+    ui=null;
+  };
+  return stage;
 }
 // Recognize a previously bound calendar even if it has not yet been renamed.
 // The legacy spelling is encoded solely to preserve migration compatibility.
@@ -1189,91 +1563,89 @@ async function containsManagedEvent(calendar,state){
 }
 // Preserve the bound calendar identifier; do not create a replacement calendar.
 async function alignBoundCalendarName(calendar,state,store){
-  let current=calendar;
-  if(config.runsInApp&&String(calendar.title||'').trim()===LEGACY_CALENDAR_TITLE&&typeof calendar.save==='function'){
-    try{
-      calendar.title='课表';
-      await calendar.save();
-      current=(await visibleCalendars()).find(c=>c.identifier===calendar.identifier)||calendar;
-    }catch(_){
-      // If the calendar account does not allow renaming, retain the binding.
-      try{current=(await visibleCalendars()).find(c=>c.identifier===calendar.identifier)||calendar;}catch(__){}
-    }
-  }
-  if(state.calendarTitle!==current.title){state.calendarTitle=current.title;store.write(state);}
-  return current;
+  // Calendar names belong to their owners. Track changes, never rename them.
+  if(state.calendarTitle!==calendar.title){state.calendarTitle=calendar.title;store.write(state);}
+  return calendar;
 }
-// Read back instead of trusting create(): a failed save must not yield a second calendar on retry.
-async function createDedicatedCalendar(){
-  for(const sourceType of ['calDAV','local']){
-    try{
-      const created=await Calendar.create({title:'课表',entityType:'event',sourceType});
-      await created.save();
-    }catch(_){}
-    const found=(await visibleCalendars()).find(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-    if(found)return found;
-  }
-  fail('CALENDAR_CREATE_FAILED');
+function validCalendarName(value){
+  const title=String(value||'').trim();
+  assert(title.length>=1&&title.length<=60&&!/[\\/\r\n\x00-\x1f]/.test(title),'CALENDAR_NAME');
+  return title;
 }
-// An empty list means the script cannot read calendars; never create one in that state.
-// A pending transaction belongs to the old calendar, so it can never move to a new one.
-async function offerDedicatedCalendar(state,store,all){
-  assert(all.length,'CALENDAR_PERMISSION');
+// Create only in a CalDAV account; verify it is actually the user's iCloud
+// account before proceeding. Scripting cannot specify an exact account ID.
+async function createDedicatedCalendar(title){
+  title=validCalendarName(title);
+  let created;
+  try{created=await Calendar.create({title,entityType:'event',sourceType:'calDAV'});}
+  catch(_){fail('CALENDAR_CREATE_FAILED');}
+  // Once creation has started, never retry under a second account on
+  // uncertain save/read-back; that can silently produce duplicate calendars.
+  try{await created.save();}catch(_){}
+  let found;
+  try{found=(await visibleCalendars()).find(c=>
+    liveCalendar(c)&&created.identifier&&c.identifier===created.identifier&&
+    String(c.title||'').trim()===title);
+  }catch(_){}
+  if(!found)fail('CALENDAR_CREATE_FAILED');
+  const source=found.source||created.source;
+  if(!source||String(source.title||'').trim().toLowerCase()!=='icloud'||
+     !['calDAV','mobileMe'].includes(source.type))fail('CALENDAR_NOT_ICLOUD');
+  return found;
+}
+async function offerDedicatedCalendar(state,store){
   assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
-  const bound=!!state.calendarId&&Object.values(state.semesters||{}).some(t=>(t.events||[]).length);
-  if(!await confirm('新建「课表」日历',
-     '没有找到可写入的「课表」日历。是否新建一个专用日历并绑定？不会改动其他日历。'+
-     (bound?'\n之前同步使用的日历当前不可见。请先确认它没有被隐藏或关闭 iCloud 同步；如果旧日历之后恢复，其中的课程会与新日历重复。':'')+
-     '\n此日历只放可替换的课表，不要混放私人日程。'))fail('CANCELLED');
-  // The dialog can outlast this run's ownership; a superseded run must not create a calendar.
-  store.check();
-  return await createDedicatedCalendar();
+  const previous=!!state.calendarId;
+  if(previous&&!await confirm('原日历不可见',
+    '未找到之前绑定的日历。如新建日历，旧日历恢复后可能出现重复课程。确定要新建一份独立的 iCloud 日历？'))fail('CANCELLED');
+  const title=validCalendarName(await input('创建 iCloud 日历','请输入自定义日历名称'));
+  store.check(); // Do not create a calendar if a waiting task superseded this run.
+  return await createDedicatedCalendar(title);
 }
-// Allow the old title during migration, but prefer the new name.
-function dedicatedCandidates(all){
-  const candidates=all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()==='课表');
-  return candidates.length?candidates:all.filter(c=>liveCalendar(c)&&String(c.title||'').trim()===LEGACY_CALENDAR_TITLE);
-}
-async function pickCalendar(state,store,force=false){
+async function pickCalendar(state,store){
   let all=await visibleCalendars();
-  const exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
-  if(exact&&!force)return await alignBoundCalendarName(exact,state,store);
-  // A changed calendar ID is NEVER silently adopted in background automation.
+  let exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
+  if(exact)return await alignBoundCalendarName(exact,state,store);
+  // Background jobs never create calendars or silently change the binding.
   if(!config.runsInApp||String(args.shortcutParameter||'').startsWith('sync'))fail('CALENDAR_MISSING');
-  let candidates=dedicatedCandidates(all);
-  // Calendars revealed by the access request are not new: they take the same
-  // confirmation and rebind checks as any other existing calendar.
-  if(!candidates.length&&typeof HostScript.requestAccess==='function'){
+  assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
+  if(!all.length&&typeof HostScript.requestAccess==='function'){
     try{await HostScript.requestAccess(['calendar']);}catch(_){}
     all=await visibleCalendars();
-    const revealed=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
-    if(revealed&&!force)return await alignBoundCalendarName(revealed,state,store);
-    candidates=dedicatedCandidates(all);
+    exact=all.find(c=>liveCalendar(c)&&c.identifier===state.calendarId);
+    if(exact)return await alignBoundCalendarName(exact,state,store);
   }
+  if(!all.length)fail('CALENDAR_PERMISSION');
   let picked,created=false;
-  if(!candidates.length){
-    picked=await offerDedicatedCalendar(state,store,all);created=true;
-  }else if(candidates.length===1){
-    picked=candidates[0];
-    if(!await confirm('绑定目标日历',
-       '检测到唯一一个可编辑的「课表」日历（或尚未更名的旧日历）。'+
-       (state.calendarId&&state.calendarId!==picked.identifier?'\n原日历 ID 与当前不一致，需要重新绑定。':'')+
-       '\n专用课表日历模式：新教务数据写入核验后，会自动备份并删除该日历中的旧导入内容（含循环系列）。此日历必须只放可替换的课表；不会操作其他日历。'))fail('CANCELLED');
+  if(!state.calendarId){
+    // New installs never inherit an unrelated calendar, regardless of name.
+    picked=await offerDedicatedCalendar(state,store);created=true;
   }else{
-    await notice('请选择准确的目标日历','检测到多个同名日历。请选择原来用于课表同步的同一个日历。如无法区分，请取消以免写入错误日历。');
-    const selected=await Calendar.presentPicker(false);
-    picked=Array.isArray(selected)?selected[0]:null;
-    assert(picked&&candidates.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
-    if(!await confirm('确认日历','已选择「'+picked.title+'」。确认这是原来绑定的课表专用日历？'))fail('CANCELLED');
-  }
-  if(!created&&state.calendarId&&state.calendarId!==picked.identifier){
-    // Prevent continuing a partially applied transaction in a different calendar.
-    assert(!state.tx,'CALENDAR_REBIND_UNSAFE');
-    assert(await containsManagedEvent(picked,state),'CALENDAR_REBIND_UNSAFE');
+    const dialog=new Alert();dialog.title='原日历不可见';
+    dialog.message='请选择原来的专用日历，或创建新的 iCloud 日历。更换目标可能让已同步课程重复；不得选择包含私人活动的日历。';
+    dialog.addAction('指定已有日历');dialog.addAction('创建新 iCloud 日历');dialog.addCancelAction('取消');
+    const choice=await dialog.presentSheet();
+    if(choice<0)fail('CANCELLED');
+    if(choice===1){picked=await offerDedicatedCalendar(state,store);created=true;}
+    else{
+      const selected=await Calendar.presentPicker(false);
+      picked=Array.isArray(selected)?selected[0]:null;
+      assert(picked&&liveCalendar(picked)&&all.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
+      if(!await confirm('确认目标日历',
+        '已选择「'+picked.title+'」。此日历只能用于 CourseSync，不能混放私人活动；后续同步可能清理其中的旧内容。是否确认？'))fail('CANCELLED');
+      store.check();
+      // A different existing calendar must prove ownership before adoption.
+      // Never infer ownership from name or course titles alone.
+      // Without a verified owned baseline, never adopt a pre-existing
+      // calendar that may contain personal events. Create a new one instead.
+      assert(Object.values(state.semesters||{}).some(t=>(t.events||[]).length>0),'CALENDAR_REBIND_UNSAFE');
+      assert(await containsManagedEvent(picked,state),'CALENDAR_REBIND_UNSAFE');
+    }
   }
   state.calendarId=picked.identifier;state.calendarTitle=picked.title;
   state.lastStage='日历已绑定';state.lastStageAt=new Date().toISOString();
-  store.write(state);return await alignBoundCalendarName(picked,state,store);
+  store.write(state);
+  return picked;
 }
 // Present recovery controls only for a matching failure. The main menu and
 // routine status screen remain limited to daily-use functions.
@@ -1326,13 +1698,11 @@ async function applyRecovery(kind,state,store){
   if(kind==='lock')return repairAbnormalLock(store);
 }
 async function showRunStatus(state,store){
-  const code=state.runStatus==='failed'?state.lastError:null;
-  const recovery=availableRecovery(code,state,store);
-  if(!recovery){await notice('运行状态',statusText(state));return;}
+  // No network access, iCloud probing, or calendar mutations on the overview.
   const a=new Alert();a.title='运行状态';a.message=statusText(state);
-  a.addAction(recovery.label);a.addCancelAction('关闭');
-  if(await a.presentAlert()===0)return recovery.kind;
-  return null;
+  a.addAction('环境自检');a.addCancelAction('关闭');
+  if(await a.presentAlert()!==0)return null;
+  return showEnvironmentCheck(state,store);
 }
 async function showFailureRecovery(error,state,store){
   const code=diagnosticCode(error),recovery=availableRecovery(code,state,store);
@@ -1341,32 +1711,191 @@ async function showFailureRecovery(error,state,store){
   a.addAction(recovery.label);a.addCancelAction('关闭');
   if(await a.presentAlert()===0)return applyRecovery(recovery.kind,state,store);
 }
+function automaticRetryText(state,now=Date.now()){
+  if(state.authPaused)return '需手动处理登录（定时任务暂停尝试）';
+  const next=Number(state.nextAttempt);
+  return Number.isFinite(next)&&next>now?'最早于 '+localDateTime(new Date(next).toISOString())+'（北京时间）后，等待自动化触发':'可在下次自动化触发时尝试';
+}
+// The overview is intentionally small. It describes recorded results, not a
+// real-time guarantee that the school schedule or calendar has not changed.
 function statusText(state){
-  const s=Object.values(state.semesters||{}).map(t=>(t.name||'学期')+'：'+(t.events||[]).length+' 节，成功同步 '+(t.lastSuccess?localDateTime(t.lastSuccess):'待确认')+(t.pending?'；待核对删除':'')+'；未排课 '+(t.skipped||[]).length).join('\n');
-  const recent=state.lastFailure||null;
-  const running=state.runStatus==='running'&&state.runStartedAt;
-  const elapsed=running?Math.max(0,Math.floor((Date.now()-Date.parse(state.lastStageAt||state.runStartedAt))/1000)):0;
-  return (s?s+'\n':'')+
-    '已配置日历：'+(state.calendarId?'是':'否')+
-    '\n本次运行：'+(state.runStatus==='running'?(elapsed>120?'超过 2 分钟无阶段更新（可能仍在执行或已被 iOS 终止）':'运行中或上次被中断'):(state.runStatus||'尚未开始'))+
-    '\n本次开始：'+briefTime(state.runStartedAt)+
-    '\n当前/最后阶段：'+(state.lastStage||'未知')+
-    '\n最后进展：'+briefTime(state.lastStageAt)+
-    '\n事务：'+(state.tx?'待恢复':'无')+'\n取消变动：自动同步（专用课表日历）'+
-    '\n登录会话：'+(state.authPaused?'需要人工处理':'未检测到强制重新登录')+
-    '\n自动登录凭据：'+credentialStorageStatus()+
-    '\n失效通知：'+(state.authExpiryNotifiedAt?'已提醒 '+briefTime(state.authExpiryNotifiedAt):(state.authNoticeError==='NOTIFICATION_FAILED'?'通知提交失败，请检查权限':'尚未触发'))+
-    '\n上次专用日历清理：'+(state.lastLegacyCleanupAt?briefTime(state.lastLegacyCleanupAt)+'，删除 '+(state.lastLegacyCleanupCount||0)+' 次，核验剩余 '+(state.lastLegacyCleanupRemaining||0)+' 条':'尚未执行')+
-    '\n课程提醒：'+(state.reminderError?'提交失败，请检查通知权限':'未检测到提交错误')+
-    '\n连续失败：'+(state.failures||0)+
-    '\n最近一次失败：'+(recent?briefTime(recent.at):'无')+
-    '\n最近错误：'+(recent?recent.code:(state.lastError||'无（旧版记录）'))+
-    '\n失败所在阶段：'+(recent?recent.stage:'暂无本次失败记录')+
-    '\n原因：'+(recent?reasonFor(recent.code):'尚无可确认的最新错误')+
-    '\n建议：'+(recent?actionFor(recent.code):'若一直转圈，检查上方阶段及最近步骤')+
-    '\n最近步骤（北京时间）：'+(state.stageHistory||[]).slice(-10).map(x=>'\n'+briefTime(x.at)+' '+x.stage).join('')+
-    '\n已导入学期：'+Object.keys(state.semesters||{}).length+' / '+(state.availableSemesters||[]).length+
-    '\n学期读取失败：'+(state.termErrors||[]).map(x=>x.sid+' '+x.code).join('；');
+  const status=state.tx?'需要恢复上次写入':
+    state.lastError==='LOGOUT_INCOMPLETE'?'退出未完成':
+    state.signedOut?'已退出登录':
+    state.authPaused?'需要处理登录':
+    state.runStatus==='failed'?'上次刷新失败':
+    state.runStatus==='partial'||(state.termErrors||[]).length?'部分学期未完成':
+    state.runStatus==='running'?'上次同步可能仍在运行':
+    state.runStatus==='success'?'上次刷新成功':
+    state.runStatus==='cancelled'?'上次操作已取消':'尚未完成首次同步';
+  const hasIssue=!!state.tx||state.lastError==='LOGOUT_INCOMPLETE'||(!state.signedOut&&(!!state.authPaused||['failed','partial'].includes(state.runStatus)||(state.termErrors||[]).length>0));
+  const calendar=state.calendarId?(state.calendarTitle||'已绑定（名称未记录）'):'未绑定';
+  const last=state.lastCheck?briefTime(state.lastCheck):'尚无成功核验记录';
+  const recent=state.runStatus==='failed'&&state.lastError?
+    '\n最近问题：'+reasonFor(state.lastError):'';
+  const noticeWarning=state.resultNoticeError||state.authNoticeError||state.reminderError?
+    '\n通知：有发送异常（不影响已完成的课表同步）':'';
+  return '结果：'+status+
+    '\n上次完成检查：'+last+'（北京时间）'+
+    '\n课表日历：'+calendar+
+    (state.lastError==='LOGOUT_INCOMPLETE'?'\n登录：退出未完成，请重试':state.signedOut?'\n登录：已退出，点击「立即刷新」重新登录':state.authPaused?'\n登录：需要手动处理':'')+
+    (state.tx?'\n事务：等待安全恢复':'')+
+    (!state.authPaused&&Number(state.nextAttempt)>Date.now()?'\n下次自动尝试：'+automaticRetryText(state):'')+
+    recent+noticeWarning+
+    (hasIssue?'\n建议：打开「环境自检」定位问题':'');
+}
+// A single authenticated GET checks the actual current school session without
+// asking for course-table JSON, changing cookies, or submitting credentials.
+// The result refers only to this request, not a promise of future validity.
+async function probeSchoolSession(jar){
+  const req=new Request(TABLE);
+  req.method='GET';req.timeoutInterval=7;
+  const cookie=jar?.header(TABLE)||'';
+  req.headers={Accept:'text/html, */*;q=0.8',...(cookie?{Cookie:cookie}:{})};
+  let redirected=null,html='';
+  req.onRedirect=next=>{redirected=String(next?.url||'');return null;};
+  try{html=await bounded(req.loadString(),8500,'NETWORK_TIMEOUT');}
+  catch(e){
+    if(!redirected)return {
+      connection:{level:'待确认',detail:'当前请求失败（'+networkErrorCode(e)+'）；请检查网络'},
+      auth:{level:'待确认',detail:'实时验证未完成；未提交账号密码'}
+    };
+  }
+  const status=Number(req.response?.statusCode);
+  if(redirected){
+    let destination;
+    try{destination=resolveURL(TABLE,redirected);}
+    catch(_){return {
+      connection:{level:'注意',detail:'学校入口返回异常跳转，已阻止继续跟随'},
+      auth:{level:'待确认',detail:'无法确认当前会话，未跟随未知跳转'}
+    };}
+    const url=safeURL(destination);
+    const login=url.host==='authserver.nufe.edu.cn'||
+      url.path==='/student/login'||url.path==='/student/sso/login';
+    return {
+      connection:{level:'正常',detail:'学校入口已响应跳转'},
+      auth:login?{level:'注意',detail:'当前 Cookie 未通过登录检查；学校要求重新认证'}:
+        {level:'待确认',detail:'学校入口发生站内跳转，未继续验证'}
+    };
+  }
+  if(status===401||status===403)return {
+    connection:{level:'正常',detail:'学校服务器已响应（HTTP '+status+'）'},
+    auth:{level:'注意',detail:'当前会话未通过认证检查（HTTP '+status+'）'}
+  };
+  if(status>=500)return {
+    connection:{level:'注意',detail:'学校服务器响应异常（HTTP '+status+'）'},
+    auth:{level:'待确认',detail:'服务器异常，本次无法验证登录'}
+  };
+  if(!(status>=200&&status<300))return {
+    connection:{level:'待确认',detail:'学校服务器返回 HTTP '+(Number.isFinite(status)?status:'未知')},
+    auth:{level:'待确认',detail:'当前登录状态无法确认'}
+  };
+  if(typeof html!=='string'||html.length>2*1024*1024)return {
+    connection:{level:'正常',detail:'学校服务器已响应'},
+    auth:{level:'待确认',detail:'返回内容无法安全核对身份'}
+  };
+  try{
+    pageInfo(html);
+    return {
+      connection:{level:'正常',detail:'学校课表入口可访问'},
+      auth:{level:'正常',detail:'刚刚使用本机 Cookie 验证成功；未获取课程或提交密码'}
+    };
+  }catch(_){
+    const login=/<form\b[^>]*\bid=["']pwdFromId["']|name=["'](?:password|username)["']/i.test(html);
+    return {
+      connection:{level:'正常',detail:'学校服务器已响应'},
+      auth:login?{level:'注意',detail:'学校返回登录页，当前 Cookie 需要重新认证'}:
+        {level:'待确认',detail:'返回页面未包含可验证的课表身份信息'}
+    };
+  }
+}
+// On-demand checks re-read live host APIs and attempt one read-only session
+// request. They never acquire a sync lock, save cookies, or modify calendars.
+async function inspectEnvironment(state,store){
+  const checks=[],put=(name,level,detail)=>checks.push({name,level,detail});
+  try{const fresh=store.read();validateState(fresh);put('本地状态','正常','状态文件可读取、结构有效');}
+  catch(_){put('本地状态','注意','状态文件无法安全读取，请保留数据');}
+
+  try{
+    const all=await bounded(visibleCalendars(),6500,'CALENDAR_TIMEOUT');
+    if(!state.calendarId)put('目标日历','注意','未绑定课表日历');
+    else{
+      const found=all.find(c=>c&&c.identifier===state.calendarId);
+      if(!found)put('目标日历','注意','原日历当前不可见；勿直接新建替换');
+      else if(!liveCalendar(found))put('目标日历','注意','原日历不可写入');
+      else put('目标日历','正常','绑定的日历可见且可编辑');
+    }
+  }catch(_){put('目标日历','待确认','无法读取日历列表；检查完全访问权限');}
+
+  let jar=null;
+  if(state.signedOut){
+    jar=new CookieJar();
+    put('Cookie 存储','正常','已退出登录；自检不读取或发送先前的学校会话 Cookie');
+  }else try{
+    jar=readCookieJar();
+    put('Cookie 存储','正常','本次读取及格式检查通过');
+  }catch(_){put('Cookie 存储','注意','本机 Cookie 异常，未清理；无法携带原会话验证');}
+  const session=await probeSchoolSession(jar);
+  put('学校连接',session.connection.level,session.connection.detail);
+  if(state.signedOut)put('登录会话',state.lastError==='LOGOUT_INCOMPLETE'?'注意':'正常',state.lastError==='LOGOUT_INCOMPLETE'?'退出凭据清除未完成，但本次没有发送原会话 Cookie':'已退出，本次没有发送原会话 Cookie');
+  else if(!jar)put('登录会话','注意','Cookie 存储异常，未使用原会话验证');
+  else if(state.authPaused&&session.auth.level==='正常')
+    put('登录会话','注意','当前会话验证通过，但此前登录暂停记录尚未解除；请手动刷新确认');
+  else put('登录会话',session.auth.level,session.auth.detail);
+  try{
+    const status=credentialStorageStatus();
+    if(/不可读取|异常/.test(status))put('自动登录凭据','注意','钥匙串暂不可读取或格式异常');
+    else if(status==='未保存账号密码')put('自动登录凭据','待确认','未保存；仍可前台手动登录');
+    else put('自动登录凭据','正常','本机凭据读取正常');
+  }catch(_){put('自动登录凭据','待确认','无法检查本机钥匙串');}
+
+  try{
+    const lock=store.path('run-lock.json');
+    if(store.fm.fileExists(lock)){
+      let parsed=null;
+      try{parsed=JSON.parse(store.fm.readString(lock));}catch(_){}
+      if(!parsed||typeof parsed.token!=='string'||!Number.isFinite(parsed.at))
+        put('同步任务','注意','运行锁异常；自检不会清理');
+      else if(Date.now()-parsed.at>=20*60000)
+        put('同步任务','注意','存在过期运行锁；不会自动清理');
+      else put('同步任务','待确认','检测到有效运行锁，可能仍有任务执行');
+    }else if(state.tx)put('同步任务','注意','存在未完成事务；下次刷新尝试安全恢复');
+    else if(state.runStatus==='running')put('同步任务','注意','未发现运行锁，但上次运行未记录完成');
+    else put('同步任务','正常','无运行锁或待恢复事务');
+  }catch(_){put('同步任务','待确认','无法读取锁文件');}
+
+  try{
+    const names=[state.tx?.backupName,state.lastSyncBackupName,state.lastLegacyBackupName,state.lastLegacyReportName].filter(Boolean);
+    if(names.some(n=>typeof n!=='string'||!/^[^/\\]+$/.test(n)||!store.fm.fileExists(store.path(n))))
+      put('本地备份','注意','有备份引用不可读取；请保留现有文件');
+    else if(names.length)put('本地备份','正常','已记录的备份文件存在（未进行恢复测试）');
+    else put('本地备份','待确认','没有记录中的备份引用，不代表数据丢失');
+  }catch(_){put('本地备份','待确认','无法检查备份引用');}
+
+  return checks;
+}
+function environmentCheckText(checks,state){
+  const icon={正常:'✓',注意:'!',待确认:'?'};
+  const issues=checks.filter(c=>c.level==='注意').length,unknown=checks.filter(c=>c.level==='待确认').length;
+  const title=issues?'有 '+issues+' 项需要处理':unknown?'有 '+unknown+' 项暂无法确认':'已完成全部基础检查';
+  const lines=checks.map(c=>icon[c.level]+' '+c.name+'：'+c.detail);
+  if(state.runStatus==='failed'&&state.lastError){
+    lines.push('上次失败：'+state.lastError+' — '+reasonFor(state.lastError));
+    lines.push('建议：'+actionFor(state.lastError));
+  }
+  return title+'（? 表示尚无法确认）\n\n'+lines.join('\n')+
+    '\n\n只读检查；不会删除课程、清理 Cookie 或修改日历。';
+}
+async function showEnvironmentCheck(state,store){
+  const checks=await inspectEnvironment(state,store);
+  const code=state.runStatus==='failed'?state.lastError:null;
+  const recovery=availableRecovery(code,state,store);
+  const report=environmentCheckText(checks,state);
+  // Routine results need a single acknowledgment, not a secondary log menu.
+  if(!recovery){await notice('环境自检',report);return null;}
+  const prompt=new Alert();prompt.title='环境自检';prompt.message=report;
+  prompt.addAction(recovery.label);prompt.addCancelAction('关闭');
+  return await prompt.presentAlert()===0?recovery.kind:null;
 }
 // Verified first teaching-week Mondays from the original project's semesters.json.
 // Keep this allow-list local: no additional server, tracking, or third-party endpoint.
@@ -1410,7 +1939,7 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
   // Never invent a date when the school returns no usable dates.
   let suggestion=null, lookupError=null;
   try{
-    const detail=await http.json(JW+'/student/ws/semester/get/'+sid);
+    const detail=await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
     anchor=explicitTeachingMonday(detail);
     if(anchor){
       state.anchors[sid]=anchor;
@@ -1582,6 +2111,9 @@ function selectTermIds(info,state,allTerms){
   const available=[...new Set(info.semesters.map(s=>s.id))];
   assert(available.includes(info.current),'SCHEMA');
   const rest=available.filter(sid=>sid!==info.current);
+  // Foreground manual refresh: check every school-listed semester, every time.
+  // Progress feedback stays visible and each term still uses existing
+  // transaction recovery, ownership checks and school error handling.
   if(allTerms)return [info.current,...rest];
   if(!rest.length)return [info.current];
   const start=((Number(state.cursor)||0)%rest.length+rest.length)%rest.length;
@@ -1590,7 +2122,7 @@ function selectTermIds(info,state,allTerms){
   state.cursor=(start+count)%rest.length;
   return [info.current,...selected];
 }
-async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null) {
+async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null,manualAuth=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
@@ -1598,11 +2130,14 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   // A pending target is rebased on a fresh school response before any resume write.
   const interrupted=state.tx;
   if(state.notice){state.notice=null;store.write(state);}
-  const jar=readCookieJar();
+  // Explicit sign-out ignores any stale cookie, including partial Keychain failures.
+  const jar=state.signedOut?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
   const http=new HTTP(jar,c=>Keychain.set(KEY,JSON.stringify(c)),budget,stage);
-  const info=pageInfo(await coursePage(http,interactive,stage));
-  const accountKey='NUFE.Local.v1.person';
+  const info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
+  // Only a verified school session ends the signed-out state.
+  if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
+  const accountKey='CourseSync.Local.v1.person';
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
   // Foreground covers all school-listed terms; background rotates two older terms.
@@ -1614,9 +2149,9 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
     budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
     const anchor=await chooseAnchor(sid,name,http,state,store,interactive);
     stage('请求学期 '+sid+' 课表数据');
-    const raw=await http.json(TABLE+'/semester/'+sid+'/print-data?'+form({semesterId:sid,hasExperiment:'true'}));
+    const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
     const normalized=expand(raw,sid,anchor);
-    if(normalized.studentCode){const studentKey='NUFE.Local.v1.student';if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
+    if(normalized.studentCode){const studentKey='CourseSync.Local.v1.student';if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
     let old=state.semesters[sid];
     if(interrupted&&interrupted.sid===String(sid)){const recovered=new Map([...interrupted.before,...interrupted.target].map(e=>[e.id,e]));old={...(old||{}),events:[...recovered.values()]};}
     // Recover local logical IDs from managed event notes when term index is absent.
@@ -1662,58 +2197,59 @@ async function loginPreflight(state,store,progress){
   if(!f.execution)fail('LOGIN_EXECUTION_MISSING');
   return '认证入口可访问，密码加密盐和认证字段均已找到。此检查未提交账号密码，也未写入课程。';
 }
-async function widget(store) {
-  if(typeof ListWidget==='undefined'){
-    if(typeof console!=='undefined'&&typeof console.warn==='function')console.warn('[NUFE] 当前环境不支持 Scriptable 样式 ListWidget');
-    return;
+// Credentials are automatically stored only after the school verifies login.
+// Logging out deletes local session cookies and Scripting's saved credentials,
+// without touching the iOS Passwords website entry or Apple Calendar.
+async function signOut(state,store){
+  // Saved credentials and the local authenticated session are separate.
+  if(!await confirm('退出登录',
+    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
+
+  // Persist a fail-closed marker before touching the Keychain, so scheduled
+  // refreshes cannot silently sign back in even if deletion partially fails.
+  state.signedOut=true;state.authPaused=true;state.authExpiryNotifiedAt=null;
+  state.nextAttempt=0;state.failures=0;state.lastError=null;
+  state.runStatus='signed_out';state.credentialCloudStatus=null;
+  store.write(state);
+  try{
+    if(Keychain.contains(KEY))Keychain.remove(KEY);
+    if(Keychain.contains('NUFE.Local.v1.cookies'))
+      Keychain.remove('NUFE.Local.v1.cookies');
+    removeSavedCredentials();
+    if(Keychain.contains(KEY)||Keychain.contains('NUFE.Local.v1.cookies')||
+      hasSavedCredentials()||CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
+      fail('CREDENTIALS_UNAVAILABLE');
+  }catch(_){
+    // Stay signed out and offer retry rather than declaring a false success.
+    fail('LOGOUT_INCOMPLETE');
   }
-  const state=store.read(),w=new ListWidget(),now=Date.now(),local=new Date(now+8*3600000),day=local.toISOString().slice(0,10),mode=String(args.widgetParameter||'today');
-  const midnight=Date.parse(day+'T00:00:00+08:00');let start=midnight,end=start+DAY;
-  if(mode==='tomorrow'){start+=DAY;end+=DAY;}if(mode==='week'){start-=((local.getUTCDay()+6)%7)*DAY;end=start+7*DAY;}
-  const events=Object.values(state.semesters).flatMap(s=>s.events||[]).sort((a,b)=>a.start.localeCompare(b.start));
-  let selected=events.filter(e=>Date.parse(e.start)>=start&&Date.parse(e.start)<end);
-  if(mode==='current')selected=events.filter(e=>Date.parse(e.start)<=now&&Date.parse(e.end)>now);
-  if(mode==='next')selected=events.filter(e=>Date.parse(e.start)>now).slice(0,1);
-  const family=config.widgetFamily||'medium',small=family.startsWith('accessory');
-  w.addText('NUFE · '+(mode==='week'?'本周':mode==='tomorrow'?'明天':mode==='next'?'下一节':mode==='current'?'当前':'今天')).font=Font.boldSystemFont(small?12:15);
-  for(const e of selected.slice(0,small?1:family==='large'?9:3)){if(!small)w.addSpacer(5);w.addText((Date.parse(e.start)<=now&&Date.parse(e.end)>now?'● ':'')+localDateTime(e.start).slice(mode==='week'?5:11)+' '+e.title).font=Font.systemFont(small?11:13);if(!small)w.addText(e.location).font=Font.systemFont(11);}
-  if(!selected.length)w.addText('此范围暂无课程');
-  if(!small){w.addSpacer();const success=Object.values(state.semesters).map(s=>s.lastSuccess).filter(Boolean).sort()[0];w.addText(state.tx?'同步待恢复':!success||now-Date.parse(success)>2*DAY?'课表可能过期，点按刷新':'仅本地缓存').font=Font.systemFont(10);}
-  w.url=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});w.refreshAfterDate=new Date(now+30*60000);Script.setWidget(w);
-}
-// Credentials are opt-in and iCloud-synchronizable; cookies and device IDs stay device-only.
-// install only trusted scripts, and do not export keys/values to diagnostics.
-async function manageSavedCredentials(state,store){
-  let current=null,damaged=false;try{current=readSavedCredentials();}catch(e){if(['CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(e.code)){damaged=true;}else throw e;}
-  const present=hasSavedCredentials();
-  const menu=new Alert();menu.title='iCloud 自动登录凭据';
-  menu.message=damaged?'保存的登录凭据格式异常或暂不可读取，请检查后重新保存。':
-    current?'已保存账号 '+maskedAccount(current.username)+'（密码不显示）。'+
-      (state.credentialCloudStatus==='conflict'?'本机与 iCloud 凭据不一致；当前优先使用本机账号，请手动更换或确认。':
-       state.credentialCloudStatus==='unavailable'?'iCloud 迁移尚未完成，暂时保留本机凭据。':'Cookie 失效时可自动重新登录。'):
-    '尚未保存账号密码。保存到 iCloud 钥匙串后，可在其他已同步设备上使用。';
-  menu.message+='\n\n存储状态：'+credentialStorageStatus();
-  menu.addAction(present?'更换账号或密码':'保存账号与密码');
-  if(present)menu.addDestructiveAction('删除保存的账号与密码');
-  menu.addCancelAction('关闭');
-  const choice=await menu.presentSheet();if(choice<0)return;
-  if(choice===0){
-    const account=await credentialForm({title:'保存登录凭据'});
-    saveCredentials(account.username,account.password);
-    state.credentialCloudStatus='synced';
-    // After user explicitly updates credentials, allow the next timed check.
-    state.authPaused=false;state.authExpiryNotifiedAt=null;state.nextAttempt=0;store.write(state);
-    await notice('已启用自动重新登录','本机已写入并读回 iCloud 可同步凭据。是否已同步到其他设备仍需核验。Cookie 保存在本机；学校账号密码尚未在此次保存操作中验证。');
-  }else if(present&&choice===1){
-    if(!await confirm('确认删除同步凭据','将从 iCloud 钥匙串删除登录凭据，其他已同步设备也会失去该副本。现有课表与各设备本机 Cookie 不受影响。'))return;
-    removeSavedCredentials();state.credentialCloudStatus=null;store.write(state);
-    await notice('已关闭自动登录','登录凭据已从 iCloud 钥匙串及本机旧存储中删除。');
-  }
+  try{await notice('已退出登录','已清除本机会话和 CourseSync 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
+  return true;
 }
 async function refreshResult(ok,code=null){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'NUFE 课表 · 部分完成':'NUFE 课表 · 刷新'+(ok?'成功':'失败');
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新'+(ok?'成功':'失败');
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
+}
+// Notification delivery is separate from the verified calendar result.
+async function reportRefreshResult(ok,code,state,store){
+  try{await refreshResult(ok,code);if(state)state.resultNoticeError=null;}
+  catch(_){if(state)state.resultNoticeError='NOTIFICATION_FAILED';}
+  // Do not turn an optional delivery/status-write failure into a sync failure.
+  if(state&&store&&store.token){try{store.write(state);}catch(_){}}
+}
+// Authentication problems require one actionable notification, not a generic
+// failure alert every day. Keep the normal completion notification otherwise.
+async function reportBackgroundFailure(code,state,store){
+  try{
+    if(state&&state.authPaused)await notifyAuthExpiredOnce(state,store);
+    else await reportRefreshResult(false,code,state,store);
+  }catch(_){
+    if(state&&store&&store.token){
+      state.authNoticeError='NOTIFICATION_FAILED';
+      try{store.write(state);}catch(__){}
+    }
+  }
 }
 // Foreground: offer a choice only when a competing task is detected.
 // Background: bounded waiting, then a clean skip; iOS may terminate a waiting
@@ -1722,56 +2258,81 @@ async function acquireSyncSlot(store,interactive,{foregroundWait=120000,backgrou
   try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   if(interactive){
     const choice=new Alert();choice.title='已有同步任务';
-    choice.message='另一项课表同步正在运行。可等待它完成，或请求它在安全检查点退出后重新同步。取消不会强制终止 iOS 进程。';
+    choice.message='前一次同步仍持有任务锁。可等待完成，或请求前次任务安全退出；如果 iOS 已结束前次进程，程序只会在确认长期没有活动后接管。不会强制终止正在写入的日历操作。';
     choice.addAction('等待完成');
     choice.addDestructiveAction('取消前次任务并刷新');
     choice.addCancelAction('暂不刷新');
     const selected=await choice.presentSheet();
     if(selected<0)return 'dismissed';
-    if(selected===1)store.requestCancelActive();
+    if(selected===1){
+      const requested=store.requestCancelActive();
+      if(!requested){
+        try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+      }
+    }
   }
   const deadline=Date.now()+(interactive?foregroundWait:backgroundWait);
   while(Date.now()<deadline){
+    if(interactive){
+      // A stopped iOS run cannot acknowledge the cancel request. Only after
+      // sufficient inactivity, and only for a matching explicit user request,
+      // transfer ownership; the old token is invalidated before new work.
+      if(store.recoverStalledCancellation()){
+        try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+      }
+    }
     await new Promise(resolve=>Timer.schedule(poll,false,resolve));
+    try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
+  }
+  if(interactive&&store.recoverStalledCancellation()){
     try{store.acquire();return 'acquired';}catch(e){if(e.code!=='BUSY')throw e;}
   }
   return 'still-running';
 }
+function canOfferSignOut(state){
+  if(state.lastError==='LOGOUT_INCOMPLETE')return true;
+  // No separate logout entry until a session or script credentials exist.
+  // After interrupted cleanup (or iCloud sync reappearance), keep retryable.
+  try{return Keychain.contains(KEY)||hasSavedCredentials();}
+  catch(_){return !state.signedOut;}
+}
 async function run() {
-  __NUFE_BOOT_PHASE='初始化本地存储';
-  const store=new Store();if(config.runsInWidget){await widget(store);Script.complete();return;}
+  __COURSESYNC_BOOT_PHASE='初始化本地存储';
+  const store=new Store();
+  migrateLegacyKeychainData();
+  activateSelectedSchool(loadSelectedSchool());
   let firstSetup=false;
-  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId||(!Keychain.contains(KEY)&&!hasSavedCredentials());}catch(_){}}
+  // A configured calendar stays configured even after explicitly logging out.
+  if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
-  let state,locked=false,progress=null,action=0;
+  let state,locked=false,progress=null,action=0,manualAuth=null;
   try {
     if(interactive&&!firstSetup){
       state=store.read();
-      const menu=new Alert();menu.title='NUFE 课表';
-      menu.message=state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
-      ['立即刷新','账号与日历设置','运行状态'].forEach(x=>menu.addAction(x));menu.addCancelAction('关闭');
+      // Heal the widget cache from existing verified state even without network.
+      publishWidgetCache(state);
+      const menu=new Alert();menu.title='CourseSync';
+      menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
+      menu.addAction('立即刷新');menu.addAction('运行状态');
+      if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
+      menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
-      if(selected===2){
+      if(selected===1){
         const recovery=await showRunStatus(state,store);
         if(!recovery)return;
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===1){
-        const settings=new Alert();settings.title='账号与日历设置';
-        ['自动登录凭据','课表日历'].forEach(x=>settings.addAction(x));settings.addCancelAction('返回');
-        const choice=await settings.presentSheet();if(choice<0)return;
-        action=[13,7][choice];
-      }
+      if(selected===2)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
       // Never record a second task as a failed synchronization.
       // The original task remains responsible for the calendar and state.
       if(interactive&&slot==='still-running')
-        await notice('同步仍在进行','前一任务尚未结束。本次没有启动第二个同步，也没有修改日历。');
+        await notice('前次任务未退出','已经请求取消，但前次任务仍持有有效锁，尚不能安全接管。请稍后重试；不会强制删除日历或并发同步。');
       if(!interactive&&config.runsWithSiri)
         Script.setShortcutOutput('前一任务仍在同步，本次未重复执行。');
       return;
@@ -1780,7 +2341,7 @@ async function run() {
     if(!state.owner){state.owner=uuid();store.write(state);}
     // Attempt one safe password migration per invocation. Failures never block
     // existing local credentials or trigger repeated school login attempts.
-    if(Keychain.contains(CRED_KEY)){
+    if(!state.signedOut&&Keychain.contains(CRED_KEY)){
       try{
         const migrated=migrateSavedCredentials();
         state.credentialCloudStatus=migrated==='conflict'?'conflict':'synced';
@@ -1792,22 +2353,38 @@ async function run() {
       state.notificationMode='result-only-v1.9';state.minutes=0;store.write(state);
       await refreshReminders(state,store);
     }
-    if(action===13){await manageSavedCredentials(state,store);return;}
+    if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
-    if(action===7){const c=await pickCalendar(state,store,true);await notice('日历已绑定',c.title+'：只用于可替换的课表。旧内容会在新课表写入核验后自动清理。');return;}
+    if(interactive&&action===0){
+      manualAuth=await prepareManualRefresh(state);
+      if(!manualAuth)return; // Cancel was handled within the native sheet.
+    }
     if(!interactive){
-      if(state.authPaused){await refreshResult(false,state.lastError||'AUTH_REQUIRED');if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
-      if(state.nextAttempt&&Date.now()<state.nextAttempt){await refreshResult(false,'RETRY_LATER');if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：处于失败退避等待期。');return;}
+      // Manual logout is intentional and must never cause background login or warning spam.
+      if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
+      if(state.authPaused){await reportBackgroundFailure(state.lastError||'AUTH_REQUIRED',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新失败：登录需要处理，旧课表保留。');return;}
+      if(state.nextAttempt&&Date.now()<state.nextAttempt){await reportBackgroundFailure('RETRY_LATER',state,store);if(config.runsWithSiri)Script.setShortcutOutput('刷新暂缓：'+automaticRetryText(state)+'。');return;}
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
-    __NUFE_BOOT_PHASE='同步运行';
+    __COURSESYNC_BOOT_PHASE='同步运行';
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
-    await synchronize(state,store,calendar,interactive,interactive,progress);
+    await progress.start();
+    progress('连接教务系统');
+    await synchronize(state,store,calendar,interactive,interactive,progress,manualAuth);
+    publishWidgetCache(state);
+    // WidgetKit prefers the lightweight Storage mirror and may also use the
+    // original App Group snapshot if its path is exposed in this context. Reload requests
+    // are best effort and must never turn a successful sync into a failure.
+    try{const widgets=hostAPI('Widget');if(widgets){
+      if(typeof widgets.reloadUserWidgets==='function')widgets.reloadUserWidgets();
+      else if(typeof widgets.reloadAll==='function')widgets.reloadAll();
+    }}catch(_){}
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
-    if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await refreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null);
-    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');
+    if(progress)progress.finish();
+    if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await reportRefreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null,state,store);
+    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(code==='SYNC_SUPERSEDED'){
@@ -1828,17 +2405,18 @@ async function run() {
       }
       try{store.write(state);}catch(_){}
     }
-    if(!interactive){try{await refreshResult(false,code);}catch(_){if(state&&locked){state.authNoticeError='NOTIFICATION_FAILED';try{store.write(state);}catch(__){}}}}
-    if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[NUFE] '+code+' · '+(state&&state.lastStage||'未知阶段'));
+    if(!interactive)await reportBackgroundFailure(code,state,store);
+    if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[CourseSync] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
+      if(progress)progress.finish();
       try{await showFailureRecovery(e,state,store);}
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
     else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
-  }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
+  }finally{if(manualAuth?.password)manualAuth.password='';if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,refreshResult,refreshReminders,validateRecords,validateState,readCookieJar,credentialForm,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,maskedAccount,passwordLogin,coursePage,manageSavedCredentials,run};
+if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*
@@ -2521,8 +3099,8 @@ Public License instead of this License.  But first, please read
 
 */
 
-  }catch(error){await __NUFE_REPORT_STARTUP(error);}
+  }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
 // Calling an async function is supported by Scripting 3.2.1's normal script loader.
 // The Promise is exposed solely for local entry-point regression tests, never credentials.
-globalThis.__NUFE_LAUNCH__=__NUFE_START();
+globalThis.__COURSESYNC_LAUNCH__=__NUFE_START();

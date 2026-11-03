@@ -1,0 +1,261 @@
+// Shared, read-only data projection for the Scripting Home Screen widget.
+// The main sync engine remains the only writer of this App Group state.
+const HOUR = 3600000;
+const DAY = 24 * HOUR;
+const BEIJING = 8 * HOUR;
+const STATE_DIR = 'CourseSync/CourseSync-v2';
+const LEGACY_STATE_DIR = 'NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+const NAMES = ['一','二','三','四','五','六','日'];
+
+// Read the shared snapshots exactly as the sync engine does. Avoid a hard
+// dependency on statSync: file metadata isn't necessary to parse our own JSON,
+// and unsupported/failed metadata calls used to mask readable caches.
+const MIRROR_KEY='CourseSync.Widget.Courses.v1';
+const LEGACY_MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
+// Storage is private to the NUFE-Schedule project (no shared:true). The
+// widget can use it even when the extension does not expose a FileManager
+// App Group root. The legacy file reader is a fallback for existing installs.
+export function readWidgetMirror(storage){
+  if(!storage||typeof storage.get!=='function')return {kind:'empty',code:'STORAGE_UNAVAILABLE'};
+  let obj;
+  try{
+    obj=storage.get(MIRROR_KEY);
+    if(obj==null)obj=storage.get(LEGACY_MIRROR_KEY);
+  }catch(_){return {kind:'invalid',code:'STORAGE_READ'};}
+  if(obj==null)return {kind:'empty',code:'STORAGE_EMPTY'};
+  if(!obj||obj.version!==1||!Array.isArray(obj.events)||
+     obj.events.length>400||typeof obj.lastCheck!=='string')
+    return {kind:'invalid',code:'STORAGE_SCHEMA'};
+  const events=[];
+  for(const e of obj.events){
+    if(!e||typeof e.title!=='string'||typeof e.start!=='string'||
+       typeof e.end!=='string'||typeof e.location!=='string'||
+       (e.teacher!==undefined&&typeof e.teacher!=='string'))
+      return {kind:'invalid',code:'STORAGE_SCHEMA'};
+    events.push(e);
+  }
+  // Legacy preview fields in older cached payloads are intentionally ignored.
+  return {kind:'ready',state:{lastCheck:obj.lastCheck,
+    semesters:{widget:{events}}}};
+}
+
+export function loadBestWidgetState(files,storage){
+  const mirror=readWidgetMirror(storage);
+  if(mirror.kind==='ready')return mirror;
+  // Access App Group only as an optional fallback; never fabricate its path.
+  const file=loadWidgetState(files);
+  if(file.kind==='ready')return file;
+  if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_EMPTY')
+    return {kind:'empty',code:'OPEN_MAIN_ONCE'};
+  if(file.code==='GROUP_PATH'&&mirror.code==='STORAGE_UNAVAILABLE')
+    return {kind:'invalid',code:'STORAGE_UNAVAILABLE'};
+  if(mirror.kind==='invalid')return mirror;
+  return file;
+}
+
+export function loadWidgetState(files) {
+  let root;
+  try {
+    root = files.appGroupDocumentsDirectory;
+    if(typeof root!=='string'||!root) return {kind:'invalid',code:'GROUP_PATH'};
+    root = root.replace(/\\/g,'/').replace(/\/$/,'');
+  }catch(_){return {kind:'invalid',code:'GROUP_PATH'};}
+  let dir = root + '/' + STATE_DIR;
+  try{
+    if(!files.existsSync(dir)){
+      const legacy=root+'/'+LEGACY_STATE_DIR;
+      if(!files.existsSync(legacy))return {kind:'empty',code:'NO_CACHE_DIR'};
+      dir=legacy;
+    }
+  }catch(_){return {kind:'invalid',code:'CACHE_ACCESS'};}
+  let names;
+  try {
+    names = files.readDirectorySync(dir,false)
+      .map(x=>String(x).split('/').pop())
+      .filter(x=>/^state-\d{10}\.json$/.test(x)).sort();
+  }catch(_){return {kind:'invalid',code:'CACHE_LIST'};}
+  if(!names.length)return {kind:'empty',code:'NO_STATE'};
+  const filename = dir + '/' + names[names.length-1];
+  let raw;
+  try {raw=files.readAsStringSync(filename);}
+  catch(_){return {kind:'invalid',code:'CACHE_READ'};}
+  if(typeof raw!=='string'||!raw.length||raw.length>4*1024*1024)
+    return {kind:'invalid',code:'CACHE_SIZE'};
+  let state;
+  try {state=JSON.parse(raw);}
+  catch(_){return {kind:'invalid',code:'CACHE_JSON'};}
+  if(!state||state.version!==1||!state.semesters||
+     typeof state.semesters!=='object'||Array.isArray(state.semesters))
+    return {kind:'invalid',code:'CACHE_SCHEMA'};
+  return {kind:'ready',state};
+}
+
+export function weekStartBeijing(now){
+  const ms = now instanceof Date ? now.getTime() : Number(now);
+  if(!Number.isFinite(ms)) throw Error('WIDGET_TIME');
+  const local = new Date(ms+BEIJING);
+  const daysSinceMonday = (local.getUTCDay()+6)%7;
+  return Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-
+    daysSinceMonday*DAY-BEIJING;
+}
+
+function plainText(value,limit){
+  return String(value||'').trim().slice(0,limit);
+}
+function timeString(ms){
+  return new Date(ms+BEIJING).toISOString().slice(11,16);
+}
+function safeCourse(event,weekStart,weekEnd){
+  if(!event||typeof event!=='object'||typeof event.title!=='string')return null;
+  if(typeof event.start!=='string'||typeof event.end!=='string')return null;
+  const start=Date.parse(event.start),end=Date.parse(event.end);
+  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
+     start<weekStart||start>=weekEnd||end-start>DAY) return null;
+  const day=Math.floor((start-weekStart)/DAY);
+  if(day<0||day>6)return null;
+  const teacher=typeof event.teacher==='string'?event.teacher:
+    Array.isArray(event.teachers)?event.teachers.filter(x=>typeof x==='string').join('、'):'';
+  return {id:plainText(event.id,100),title:plainText(event.title,90),
+    location:plainText(event.location,65),teacher:plainText(teacher,75),start,end,day,
+    startLabel:timeString(start),endLabel:timeString(end)};
+}
+
+export function buildWeek(state,now=Date.now()){
+  const at=now instanceof Date?now.getTime():Number(now);
+  const start=weekStartBeijing(at),end=start+7*DAY;
+  const courses=[];
+  const semesters=state&&state.semesters&&typeof state.semesters==='object'
+    ?Object.values(state.semesters):[];
+  for(const semester of semesters){
+    if(!semester||!Array.isArray(semester.events))continue;
+    for(const ev of semester.events.slice(0,4000)){
+      const course=safeCourse(ev,start,end);
+      if(course)courses.push(course);
+    }
+  }
+  courses.sort((a,b)=>a.start-b.start||a.title.localeCompare(b.title));
+  const weekend=courses.some(e=>e.day>=5);
+  const count=weekend?7:5;
+  const today=Math.floor((at-start)/DAY);
+  const days=Array.from({length:count},(_,idx)=>({
+    index:idx,label:'周'+NAMES[idx],number:new Date(start+idx*DAY+BEIJING).getUTCDate(),
+    today:idx===today,
+    courses:courses.filter(c=>c.day===idx).map(c=>({
+      ...c,status:c.end<=at?'done':c.start<=at?'current':'upcoming'
+    }))
+  }));
+  const boundaries=[start+7*DAY];
+  for(const c of courses){
+    if(c.start>at)boundaries.push(c.start);
+    if(c.end>at)boundaries.push(c.end);
+  }
+  const nextMidnight=start+(today+1)*DAY;
+  if(nextMidnight>at)boundaries.push(nextMidnight);
+  const nextAt=Math.min(...boundaries.filter(t=>t>at));
+  const update=state&&typeof state.lastCheck==='string'?Date.parse(state.lastCheck):NaN;
+  const outdated=Number.isFinite(update)&&at-update>7*DAY;
+  return {start,at,days,courses,weekend,today,nextAt,
+    updated:Number.isFinite(update)?update:null,outdated,empty:courses.length===0};
+}
+
+// A rolling four-day view: yesterday, today, tomorrow, the day after.
+// It deliberately crosses semester week/month/year boundaries without using
+// the calendar week's Monday as a fixed display window.
+export function buildRollingDays(state,now=Date.now()){
+  const at=now instanceof Date?now.getTime():Number(now);
+  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
+  const local=new Date(at+BEIJING);
+  const todayStart=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-BEIJING;
+  const start=todayStart-DAY,end=start+3*DAY;
+  const courses=[];
+  const semesters=state&&state.semesters&&typeof state.semesters==='object'
+    ?Object.values(state.semesters):[];
+  for(const semester of semesters){
+    if(!semester||!Array.isArray(semester.events))continue;
+    for(const ev of semester.events.slice(0,4000)){
+      const course=safeCourse(ev,start,end);
+      if(course&&course.day<3)courses.push(course);
+    }
+  }
+  courses.sort((a,b)=>a.start-b.start||a.title.localeCompare(b.title));
+  const names=['昨天','今天','明天'];
+  const days=Array.from({length:3},(_,index)=>{
+    const dayStart=start+index*DAY;
+    const date=new Date(dayStart+BEIJING);
+    const weekday='周'+NAMES[(date.getUTCDay()+6)%7];
+    return {
+      index,label:names[index],weekday,
+      number:date.getUTCDate(),month:date.getUTCMonth()+1,
+      dateLabel:(date.getUTCMonth()+1)+'/'+date.getUTCDate(),
+      today:index===1,
+      courses:courses.filter(c=>c.day===index).map(c=>({
+        ...c,status:c.end<=at?'done':c.start<=at?'current':'upcoming'
+      }))
+    };
+  });
+  const boundaries=[todayStart+DAY];
+  for(const c of courses){
+    if(c.start>at)boundaries.push(c.start);
+    if(c.end>at)boundaries.push(c.end);
+  }
+  const nextAt=Math.min(...boundaries.filter(t=>t>at));
+  const updated=state&&typeof state.lastCheck==='string'?Date.parse(state.lastCheck):NaN;
+  return {start,at,days,courses,today:1,nextAt,
+    updated:Number.isFinite(updated)?updated:null,
+    outdated:Number.isFinite(updated)&&at-updated>7*DAY,
+    empty:courses.length===0};
+}
+
+// Fixed chronological order: never jump or auto-focus a different class.
+// When layout capacity is reached, the UI prints "+N节课" for the remainder.
+export function selectVisibleCourses(day,limit=1){
+  const all=Array.isArray(day?.courses)?day.courses:[];
+  const n=Math.max(1,Math.min(5,Math.trunc(Number(limit)||1)));
+  return {courses:all.slice(0,n),hiddenAfter:Math.max(0,all.length-n),total:all.length};
+}
+
+// Show the current/next class together when today contains several classes.
+// Earlier completed classes remain in cache, but are not counted in "+N节课".
+export function selectTodayPair(day){
+  const courses=Array.isArray(day?.courses)?day.courses:[];
+  if(courses.length<=1)return {courses,hiddenAfter:0};
+  let at=courses.findIndex(e=>e.status==='current');
+  if(at<0)at=courses.findIndex(e=>e.status==='upcoming');
+  // Finished classes never displace the current or next class.
+  // Once all lessons have ended, retain only the last lesson as completed.
+  if(at<0)at=courses.length-1;
+  const shown=courses.slice(at,at+2);
+  return {courses:shown,hiddenAfter:Math.max(0,courses.length-at-shown.length)};
+}
+
+// Today: exactly one focused lesson on the left, followed by not-yet-started
+// lessons on the right. Never bring completed lessons back into the display.
+export function selectTodayColumns(day,maxFuture=1){
+  const courses=Array.isArray(day?.courses)?day.courses:[];
+  if(!courses.length)return {focus:null,future:[],hiddenAfter:0};
+  let at=courses.findIndex(c=>c.status==='current');
+  if(at<0)at=courses.findIndex(c=>c.status==='upcoming');
+  // After all lessons end, show only the last completed lesson.
+  if(at<0)return {focus:courses[courses.length-1],future:[],hiddenAfter:0};
+  const future=courses.slice(at+1).filter(c=>c.status==='upcoming');
+  const count=Math.max(0,Math.min(5,Math.trunc(Number(maxFuture)||0)));
+  return {focus:courses[at],future:future.slice(0,count),
+    hiddenAfter:Math.max(0,future.length-count)};
+}
+
+export function buildWidgetModel(state,now=Date.now()){
+  return buildRollingDays(state,now);
+}
+
+export function widgetReloadDate(model){
+  // WidgetKit schedules are best effort. Do not continuously request minute
+  // updates; only request an update at the next class boundary or day rollover.
+  const at=model.at,delta=Math.max(60000,model.nextAt-at+1000);
+  return new Date(at+Math.min(delta,DAY));
+}
+
+export function formatWeekLabel(start){
+  const d=new Date(start+BEIJING);
+  const y=d.getUTCFullYear(),m=d.getUTCMonth()+1,date=d.getUTCDate();
+  return y+' / '+String(m).padStart(2,'0')+' / '+String(date).padStart(2,'0');
+}

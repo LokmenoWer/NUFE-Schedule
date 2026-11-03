@@ -1,0 +1,91 @@
+// Public-facing metadata and documentation invariants; no Scripting host required.
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const root=path.join(__dirname,'..');
+const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const publicFiles=['script.json','docs/release-notes.md'];
+
+test('Scripting metadata keeps the intended display identity',()=>{
+  const data=JSON.parse(read('script.json'));
+  assert.equal(data.name,'CourseSync');
+  assert.equal(data.version,'0.0.0');
+  assert.match(data.description,/CourseSync/);
+  assert.equal(data.localizedNames.en,'CourseSync');
+  assert.equal(data.localizedNames.zh,'CourseSync');
+  // CourseSync is the actual Scripting script identity and stable archive name.
+  assert.equal(data.name,'CourseSync');
+  assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
+  assert.equal(data.icon,'calendar');
+});
+
+test('public-facing descriptions consistently use NUFE',()=>{
+  for(const filename of publicFiles){
+    const content=read(filename);
+    assert.doesNotMatch(content,/南京财经大学|南财/,'unexpected school name in '+filename);
+  }
+});
+
+test('README distinguishes public CourseSync name from legacy installation identity',()=>{
+  const readme=read('README.md');
+  assert.match(readme,/^# CourseSync$/m);
+  assert.match(readme,/Scripting 脚本标识/);
+  assert.match(readme,/CourseSync/);
+});
+
+test('README explicitly states verification is limited to the NUFE academic system',()=>{
+  assert.match(read('README.md'),/目前仅验证南京财经大学教务系统/);
+  assert.match(read('README.md'),/请选择你的学校/);
+});
+
+test('README remains text-only without image markup or references',()=>{
+  const readme=read('README.md');
+  assert.equal(readme.includes('<img'),false);
+  assert.equal(readme.includes('<picture'),false);
+  assert.equal(readme.includes('<svg'),false);
+  assert.equal(readme.includes('docs/images/'),false);
+  assert.equal(readme.includes('!['),false);
+  assert.match(readme,/目前仅验证南京财经大学教务系统/);
+});
+
+test('release and README describe the same stable installation path',()=>{
+  const url='https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip';
+  assert.ok(read('README.md').includes(url));
+  assert.ok(read('docs/engineering.md').includes(url));
+  assert.match(read('docs/release-notes.md'),/CourseSync\.zip/);
+  assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx script\.json/);
+});
+
+test('error guidance does not direct users to removed menu actions',()=>{
+  const source=read('index.tsx');
+  const start=source.indexOf('const ERROR_GUIDE={');
+  const end=source.indexOf('function diagnosticCode(',start);
+  assert.ok(start>=0&&end>start);
+  const guide=source.slice(start,end);
+  assert.doesNotMatch(guide,/登录页面自检（无需密码）|重试「覆盖旧课程」|从菜单执行历史课程清理|选择「重新绑定课表日历」/);
+  assert.doesNotMatch(guide,/账号与日历设置/);
+  assert.match(guide,/主菜单「立即刷新」/);
+});
+
+test('only the Release archive is distributed',()=>{
+  assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
+    'stale root ZIP should not be tracked or distributed');
+  assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
+  const workflow=read('.github/workflows/release.yml');
+  assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
+  assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
+  assert.match(workflow,/-f sha="\$GITHUB_SHA" -F force=true/);
+  assert.match(workflow,/test "\$stable_sha" = "\$GITHUB_SHA"/);
+  assert.match(workflow,/test "\$GITHUB_REF" = "refs\/heads\/main"/);
+});
+
+test('widget distribution includes the native entry and safe cache model',()=>{
+  const entry=read('widget.tsx');
+  assert.match(entry,/Widget\.present\(/);
+  assert.match(entry,/buildWidgetModel\(/);
+  assert.doesNotMatch(entry,/Keychain|CalendarEvent|fetch\(/);
+  assert.match(read('widget-data.ts'),/appGroupDocumentsDirectory/);
+  assert.match(read('scripts/package.sh'),/"7"/);
+  assert.match(read('index.tsx'),/import \{ presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm \} from '\.\/login-native'/);
+});
