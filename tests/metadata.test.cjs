@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const publicFiles=['script.json','README.md','docs/release-notes.md'];
+const publicFiles=['script.json','docs/release-notes.md'];
 
 test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
@@ -21,6 +21,11 @@ test('public-facing descriptions consistently use NUFE',()=>{
     const content=read(filename);
     assert.doesNotMatch(content,/南京财经大学|南财/,'unexpected school name in '+filename);
   }
+});
+
+test('README explicitly states verification is limited to the NUFE academic system',()=>{
+  assert.match(read('README.md'),/仅验证南京财经大学教务系统/);
+  assert.match(read('README.md'),/教务接口/);
 });
 
 test('README screenshots resolve to existing nonempty images',()=>{
