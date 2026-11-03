@@ -12,6 +12,8 @@
 >
 > 本项目为非官方开源工具，与NUFE无隶属关系。学校接口、身份验证方式及 iOS 后台调度的变化，都可能影响同步。
 
+> 为保护已有安装，底层脚本标识、GitHub 仓库地址及稳定版 ZIP 名称继续使用 `NUFE-Schedule`。Scripting、快捷指令或小组件若仍显示旧名称，继续使用原项目即可；如更新后组件或自动化无法找到脚本，请重新选择现有脚本，**不要删除原课表日历或重新导入一份重复项目**。
+
 ## 用户指南
 
 ### 1. 安装
@@ -30,7 +32,7 @@
 
 3. 返回 Scripting 主界面，点击 **CourseSync 项目卡片**运行。
 
-   <a href="docs/images/scripting-project-card.webp"><img src="docs/images/scripting-project-card.webp" alt="点击 NUFE-Schedule 项目卡片" width="330"></a>
+   <a href="docs/images/scripting-project-card.webp"><img src="docs/images/scripting-project-card.webp" alt="Scripting 项目卡片（截图可能显示旧名称）" width="330"></a>
 
 ### 2. 首次同步
 
@@ -61,7 +63,7 @@
 2. 添加 Scripting 的运行脚本操作，选择 CourseSync，设置为「立即运行」。
 3. 保存后手动测试一次。
 
-<a href="docs/images/shortcuts-automation.webp"><img src="docs/images/shortcuts-automation.webp" alt="通过快捷指令定时运行 NUFE-Schedule" width="330"></a>
+<a href="docs/images/shortcuts-automation.webp"><img src="docs/images/shortcuts-automation.webp" alt="通过快捷指令定时运行课表脚本（旧版截图）" width="330"></a>
 
 后台自动化不会弹出输入窗口；如果学校要求手动验证，需在 Scripting 前台完成。iOS 也可能延迟或跳过部分后台任务。
 
@@ -73,8 +75,6 @@
 - **退出登录**（已登录时显示）：清除本机学校 Cookie 和 CourseSync 保存的自动登录凭据，**保留课表及 Apple 日历**。下次点击「立即刷新」会重新登录；iOS「密码」App 中原有的学校网站密码不受影响。
 
 **更新项目**：在 Scripting 主界面点击 CourseSync 卡片右上角「···」→「远程资源」→「立即更新」，不需要重新导入项目或创建日历。
-
-> 为保护已有安装，底层脚本标识、GitHub 仓库地址及稳定版 ZIP 名称继续使用 `NUFE-Schedule`。Scripting、快捷指令或小组件若仍显示旧名称，继续使用原项目即可；如更新后组件或自动化无法找到脚本，请重新选择现有脚本，**不要删除原课表日历或重新导入一份重复项目**。
 
 <a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="在远程资源页面手动更新项目" width="330"></a>
 
