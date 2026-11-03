@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,buildSamplePreview,selectVisibleCourses,selectTodayPair,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,buildSamplePreview,selectVisibleCourses,selectTodayPair,selectTodayColumns,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -297,16 +297,54 @@ test('temporary demo shows four invented courses per day and second class active
   a.ok(ui.includes('buildSamplePreview(Date.now())'));
 });
 
-test('large widgets expand all four today cards in two rows; medium remains compact',()=>{
+test('today columns keep only current lesson left and stack future classes right',()=>{
+  const sample=core.buildSamplePreview(date('2026-11-03T14:20:00Z'));
+  const day=sample.days[1];
+  const large=core.selectTodayColumns(day,3);
+  a.equal(large.focus.title,'金融计量学（双语）');
+  a.deepEqual(Array.from(large.future,c=>c.title),[
+    '国际经济与贸易专题','商业数据分析']);
+  a.equal(large.hiddenAfter,0);
+  a.ok(large.future.every(c=>c.status==='upcoming'));
+  a.ok(!large.future.some(c=>c.title==='财务会计学'));
+  const medium=core.selectTodayColumns(day,1);
+  a.equal(medium.focus.title,'金融计量学（双语）');
+  a.deepEqual(Array.from(medium.future,c=>c.title),['国际经济与贸易专题']);
+  a.equal(medium.hiddenAfter,1);
+});
+
+test('today columns handle first lesson, a gap, last lesson and all finished',()=>{
+  const titles=['第一节','第二节','第三节','第四节'];
+  const courses=titles.map((title,i)=>({title,status:i===0?'current':'upcoming'}));
+  let result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第一节');
+  a.deepEqual(Array.from(result.future,c=>c.title),titles.slice(1));
+  courses[0].status='done';courses[1].status='done';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第三节');
+  a.deepEqual(Array.from(result.future,c=>c.title),['第四节']);
+  courses[2].status='done';courses[3].status='current';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第四节');
+  a.equal(result.future.length,0);
+  courses[3].status='done';
+  result=core.selectTodayColumns({courses},3);
+  a.equal(result.focus.title,'第四节');
+  a.equal(result.future.length,0);
+  a.equal(core.selectTodayColumns({courses:[]},3).focus,null);
+});
+
+test('large today layout has one focus card on the left, future stack on the right',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.ok(ui.includes('const showAllToday=!medium&&height>=290;'));
   a.ok(ui.includes('showAll={showAllToday}'));
-  a.ok(ui.includes('const visible=showAll?all.slice(0,4):focus.courses;'));
-  a.ok(ui.includes('showAll&&visible.length>2?'));
-  a.ok(ui.includes('course={visible[2]}'));
-  a.ok(ui.includes('course={visible[3]}'));
-  a.ok(ui.includes('!showAll&&focus.hiddenAfter>0'));
-  a.ok(ui.includes('showAll&&remaining>0'));
+  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('course={columns.focus}'));
+  a.ok(ui.includes('columns.future.map(c=>'));
+  a.ok(ui.includes('course={c}'));
+  a.ok(ui.includes('columns.hiddenAfter>0'));
+  a.ok(!ui.includes('course={visible[0]}'));
+  a.ok(!ui.includes('course={visible[2]}'));
 });
 
 test('historical preview uses the same three-day window and original weekdays',()=>{
@@ -447,15 +485,15 @@ test('widget labels only dates and useful class details, not redundant auto-upda
   a.match(ui,/chosen\.status==='done'\?COLORS\.doneBg/);
   a.match(ui,/foregroundStyle=\{fg\}/);
 });
-test('widget renders expanded today pair without test-only labels',()=>{
- const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
- a.match(ui,/function TodayPairColumn/);
- a.match(ui,/selectTodayPair\(day\)/);
- a.match(ui,/focus\.hiddenAfter>0/);
- a.match(ui,/\+\{focus\.hiddenAfter\}节课/);
- a.match(ui,/day\.today&&expanded/);
- a.doesNotMatch(ui,/>测试<\/Text>/);
- a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
+test('widget renders the focused today card and upcoming-only stack without extra labels',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.match(ui,/function TodayPairColumn/);
+  a.ok(ui.includes('selectTodayColumns(day,showAll?3:1)'));
+  a.ok(ui.includes('columns.future.map(c=>'));
+  a.match(ui,/\+\{columns\.hiddenAfter\}节课/);
+  a.match(ui,/day\.today&&expanded/);
+  a.doesNotMatch(ui,/>测试<\/Text>/);
+  a.doesNotMatch(ui,/近日课表|自动更新|自动定位/);
 });
 test('card paints color after fixed-width frame so backgrounds center like headers',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
