@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,selectVisibleCourses,selectTodayPair,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,buildSamplePreview,selectVisibleCourses,selectTodayPair,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -274,6 +274,27 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
+test('temporary demo shows three invented courses per day without changing live state',()=>{
+  const now=date('2026-11-03T14:20:00Z'); // Tuesday night in Beijing
+  const demo=core.buildSamplePreview(now);
+  a.equal(demo.previewTerm,'sample-3x3');
+  a.deepEqual(Array.from(demo.days,x=>x.label),['昨天','今天','明天']);
+  a.deepEqual(Array.from(demo.days,x=>x.courses.length),[3,3,3]);
+  a.equal(demo.courses.length,9);
+  a.ok(demo.days[0].courses.every(x=>x.status==='done'));
+  a.equal(demo.days[1].courses[0].status,'current');
+  a.ok(demo.days[2].courses.every(x=>x.status==='upcoming'));
+  a.deepEqual(Array.from(core.selectTodayPair(demo.days[1]).courses,x=>x.title),
+    ['财务会计学','金融计量学（双语）']);
+  a.equal(core.selectTodayPair(demo.days[1]).hiddenAfter,1);
+  a.equal(core.selectVisibleCourses(demo.days[0],1).hiddenAfter,2);
+  a.equal(demo.at,now);
+  a.equal(demo.nextAt,date('2026-11-03T16:00:00Z'));
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.match(ui,/const SHOW_SAMPLE_COURSES=true/);
+  a.match(ui,/buildSamplePreview\\(Date\\.now\\(\\)\\)/);
+});
+
 test('historical preview uses the same three-day window and original weekdays',()=>{
  const now=date('2026-11-03T14:13:00Z');
  const original=[
