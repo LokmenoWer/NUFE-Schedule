@@ -502,7 +502,9 @@ test('README documents the three-day UI without screenshots',()=>{
  a.match(readme,/今天一节可见课程/);
  a.match(readme,/今天有多节课程/);
  a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
- a.doesNotMatch(readme,/docs\\/images\\/|<img\\b|!\\[[^\\]]*\\]\\(/i);
+ a.equal(readme.includes('docs/images/'),false);
+ a.equal(readme.includes('<img'),false);
+ a.equal(readme.includes('!['),false);
  a.match(readme,/releases\/download\/stable\/CourseSync\.zip/);
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
