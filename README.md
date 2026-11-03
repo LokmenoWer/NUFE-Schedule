@@ -1,8 +1,8 @@
-# NUFE-Schedule
+# CourseSync
 
 ## 项目介绍
 
-**NUFE-Schedule** 是基于 [Scripting](https://scriptingapp.github.io/) 的NUFE课表同步工具。它在 iPhone 上直接连接学校教务系统，将课程同步到 Apple 日历，并提供主屏幕课表小组件，**无需自建服务器或让电脑常驻运行**。
+**CourseSync** 是基于 [Scripting](https://scriptingapp.github.io/) 的本地课表同步工具。它在 iPhone 上直接连接学校教务系统，将课程同步到 Apple 日历，并提供主屏幕课表小组件，**无需自建服务器或让电脑常驻运行**。
 
 - **课表同步**：获取学校可用学期的课程，处理调课、补课、取消课程和重复事件；保留必要的备份与异常恢复记录。
 - **日历与小组件**：使用独立的课表日历；主屏幕可查看昨天、今天和明天的课程。
@@ -28,7 +28,7 @@
 
    <a href="docs/images/scripting-remote-zip.webp"><img src="docs/images/scripting-remote-zip.webp" alt="输入远程 ZIP 下载地址" width="330"></a>
 
-3. 返回 Scripting 主界面，点击 **NUFE-Schedule 项目卡片**运行。
+3. 返回 Scripting 主界面，点击 **CourseSync 项目卡片**运行。
 
    <a href="docs/images/scripting-project-card.webp"><img src="docs/images/scripting-project-card.webp" alt="点击 NUFE-Schedule 项目卡片" width="330"></a>
 
@@ -45,7 +45,7 @@
 ### 3. 主屏幕小组件
 
 1. 成功同步至少一次后，在主屏幕长按空白处，添加 **Scripting** 小组件。
-2. 长按小组件 →「编辑小组件」→ 将脚本设为 **NUFE-Schedule**。
+2. 长按小组件 →「编辑小组件」→ 将脚本设为 **CourseSync**。
 
 中、大尺寸固定显示 **昨天、今天、明天**，使用纯白背景与彩色课程卡片：
 
@@ -58,7 +58,7 @@
 ### 4. 定时刷新
 
 1. 打开「快捷指令」→「自动化」，创建个人自动化并设置触发时间。
-2. 添加 Scripting 的运行脚本操作，选择 NUFE-Schedule，设置为「立即运行」。
+2. 添加 Scripting 的运行脚本操作，选择 CourseSync，设置为「立即运行」。
 3. 保存后手动测试一次。
 
 <a href="docs/images/shortcuts-automation.webp"><img src="docs/images/shortcuts-automation.webp" alt="通过快捷指令定时运行 NUFE-Schedule" width="330"></a>
@@ -70,9 +70,11 @@
 - **立即刷新**：同步课程，显示原生进度和最终结果。
 - **运行状态**：查看最近同步结果，并在出现问题时使用环境自检。
 - **教务接口**：通过 iOS 原生输入页面编辑统一认证、SSO 登录、课表页面、学期详情、课表数据五个地址，支持恢复默认。仅允许使用南京财经大学现有的可信 HTTPS 域名；模板里的 `{sid}` 为学期 ID，不得删除。配置存储在本机，不会写入日历。
-- **退出登录**（已登录时显示）：清除本机学校 Cookie 和 NUFE-Schedule 保存的自动登录凭据，**保留课表及 Apple 日历**。下次点击「立即刷新」会重新登录；iOS「密码」App 中原有的学校网站密码不受影响。
+- **退出登录**（已登录时显示）：清除本机学校 Cookie 和 CourseSync 保存的自动登录凭据，**保留课表及 Apple 日历**。下次点击「立即刷新」会重新登录；iOS「密码」App 中原有的学校网站密码不受影响。
 
-**更新项目**：在 Scripting 主界面点击 NUFE-Schedule 卡片右上角「···」→「远程资源」→「立即更新」，不需要重新导入项目或创建日历。
+**更新项目**：在 Scripting 主界面点击 CourseSync 卡片右上角「···」→「远程资源」→「立即更新」，不需要重新导入项目或创建日历。
+
+> 为保护已有安装，底层脚本标识、GitHub 仓库地址及稳定版 ZIP 名称继续使用 `NUFE-Schedule`。Scripting、快捷指令或小组件若仍显示旧名称，继续使用原项目即可；如更新后组件或自动化无法找到脚本，请重新选择现有脚本，**不要删除原课表日历或重新导入一份重复项目**。
 
 <a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="在远程资源页面手动更新项目" width="330"></a>
 
