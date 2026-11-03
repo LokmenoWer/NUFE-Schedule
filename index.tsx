@@ -4,13 +4,13 @@ import * as Scripting from "scripting";
 import { presentNativeCredentialForm, presentNativeTextForm, presentNativeEndpointForm } from './login-native';
 import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
-let __NUFE_BOOT_PHASE='初始化运行接口';
-async function __NUFE_REPORT_STARTUP(error){
+let __COURSESYNC_BOOT_PHASE='初始化运行接口';
+async function __COURSESYNC_REPORT_STARTUP(error){
   const api=name=>Scripting[name]??globalThis[name];
   const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
-  const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
-  console.error('[CourseSync] '+known+' · '+__NUFE_BOOT_PHASE);
+  const message='阶段：'+__COURSESYNC_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
+  console.error('[CourseSync] '+known+' · '+__COURSESYNC_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
   catch(_){try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
@@ -40,7 +40,7 @@ const Script={name:()=>HostScript.name,setShortcutOutput:value=>{__shortcutOutpu
   HostScript.exit(__intent?.text?__intent.text(__shortcutOutput||'处理完成'):__shortcutOutput);
 }};
 const FileManager={local:()=>({
-  libraryDirectory:()=>HostFiles.appGroupDocumentsDirectory+'/NUFE-Local-Scripting',
+  libraryDirectory:()=>HostFiles.appGroupDocumentsDirectory+'/CourseSync',
   joinPath:(a,b)=>a.replace(/\/$/,'')+'/'+b,
   fileExists:p=>HostFiles.existsSync(p),createDirectory:(p,r)=>HostFiles.createDirectorySync(p,r),
   listContents:p=>HostFiles.readDirectorySync(p,false).map(n=>String(n).split('/').pop()),readString:p=>HostFiles.readAsStringSync(p),
@@ -147,7 +147,7 @@ const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
 'use strict';
 // This deployment is explicitly authorized for a disposable, dedicated timetable calendar.
 const REPLACE_DEDICATED_LEGACY = true;
-const ENDPOINT_KEY='NUFE.Local.v1.school-endpoints';
+const ENDPOINT_KEY='CourseSync.Local.v1.school-endpoints';
 const JW='https://jwxt.nufe.edu.cn';
 const ENDPOINT_DEFAULTS=Object.freeze({
   auth:'https://authserver.nufe.edu.cn/authserver',
@@ -161,10 +161,46 @@ let SSO=ENDPOINT_DEFAULTS.sso;
 let TABLE=ENDPOINT_DEFAULTS.table;
 let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
 let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
-const KEY = 'NUFE.Local.v1.cookies';
+const KEY = 'CourseSync.Local.v1.cookies';
 // Scripting Keychain is device/app-level credential storage; never store this key in JSON state.
-const CRED_KEY = 'NUFE.Local.v1.saved-login'; // Legacy device-only credential key.
-const CLOUD_CRED_KEY = 'NUFE.Schedule.v1.icloud-credentials';
+const CRED_KEY = 'CourseSync.Local.v1.saved-login'; // Legacy device-only credential key.
+const CLOUD_CRED_KEY = 'CourseSync.v1.icloud-credentials';
+// One-time, readback-verified migration from NUFE-Schedule's Keychain keys.
+// Originals remain available for rollback until the user explicitly logs out.
+const LEGACY_DEVICE_KEYS=Object.freeze([
+  [ENDPOINT_KEY,'NUFE.Local.v1.school-endpoints'],
+  [KEY,'NUFE.Local.v1.cookies'],
+  [CRED_KEY,'NUFE.Local.v1.saved-login'],
+  ['CourseSync.Local.v1.device','NUFE.Local.v1.device'],
+  ['CourseSync.Local.v1.person','NUFE.Local.v1.person'],
+  ['CourseSync.Local.v1.student','NUFE.Local.v1.student']
+]);
+const LEGACY_CLOUD_CRED_KEY='NUFE.Schedule.v1.icloud-credentials';
+const LEGACY_IMPORT_KEY='CourseSync.Local.v1.migrated';
+function migrateLegacyKeychainData(){
+  if(Keychain.contains(LEGACY_IMPORT_KEY))return;
+  try{
+    for(const [current,old] of LEGACY_DEVICE_KEYS){
+      if(Keychain.contains(current)||!Keychain.contains(old))continue;
+      const value=Keychain.get(old);
+      if(typeof value!=='string')fail('CREDENTIALS_INVALID');
+      Keychain.set(current,value);
+      if(Keychain.get(current)!==value)fail('CREDENTIALS_UNAVAILABLE');
+    }
+    if(!CloudKeychain.contains(CLOUD_CRED_KEY)&&CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY)){
+      const value=CloudKeychain.get(LEGACY_CLOUD_CRED_KEY);
+      if(typeof value!=='string')fail('CREDENTIALS_INVALID');
+      CloudKeychain.set(CLOUD_CRED_KEY,value);
+      if(CloudKeychain.get(CLOUD_CRED_KEY)!==value)fail('CREDENTIALS_UNAVAILABLE');
+    }
+    Keychain.set(LEGACY_IMPORT_KEY,'1');
+    if(Keychain.get(LEGACY_IMPORT_KEY)!=='1')fail('CREDENTIALS_UNAVAILABLE');
+  }catch(e){
+    if(e?.code==='CREDENTIALS_INVALID')throw e;
+    fail('CREDENTIALS_UNAVAILABLE');
+  }
+}
+
 function credentialRecord(raw){
   let saved;try{saved=JSON.parse(raw);}catch(_){fail('CREDENTIALS_INVALID');}
   if(!saved||saved.version!==1||typeof saved.username!=='string'||typeof saved.password!=='string'||
@@ -219,6 +255,10 @@ function removeSavedCredentials(){
     // Deleting a synchronized item also deletes the other devices' copies.
     if(CloudKeychain.contains(CLOUD_CRED_KEY))CloudKeychain.remove(CLOUD_CRED_KEY);
     if(Keychain.contains(CRED_KEY))Keychain.remove(CRED_KEY);
+    if(CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
+      CloudKeychain.remove(LEGACY_CLOUD_CRED_KEY);
+    if(Keychain.contains('NUFE.Local.v1.saved-login'))
+      Keychain.remove('NUFE.Local.v1.saved-login');
   }catch(_){fail('CREDENTIALS_UNAVAILABLE');}
 }
 // The following is only a local read-back check, not proof that iCloud has
@@ -737,7 +777,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
   try {
     onStage('解析学校登录表单');
     const fields=await fieldsFrom(r.text,'pwdFromId');assert(fields,'LOGIN_SCHEMA');assert(fields.salt,'LOGIN_SALT_MISSING');assert(fields.execution,'LOGIN_EXECUTION_MISSING');
-    const deviceKey='NUFE.Local.v1.device';let device=Keychain.contains(deviceKey)?Keychain.get(deviceKey):uuid().replace(/-/g,'').toUpperCase();Keychain.set(deviceKey,device);
+    const deviceKey='CourseSync.Local.v1.device';let device=Keychain.contains(deviceKey)?Keychain.get(deviceKey):uuid().replace(/-/g,'').toUpperCase();Keychain.set(deviceKey,device);
     onStage('注册设备指纹');
     await http.get(AUTH+'/bfp/info?'+form({bfp:device,_:Date.now()}),{ajax:true});
     if(!http.jar.cookies.some(c=>c.name==='MULTIFACTOR_BROWSER_FINGERPRINT'))http.jar.set({name:'MULTIFACTOR_BROWSER_FINGERPRINT',value:device,domain:'authserver.nufe.edu.cn',hostOnly:true,path:'/',expires:0});
@@ -813,7 +853,45 @@ async function coursePage(http,interactive,onStage=()=>{}) {
 // Immutable generation files: a new file is written and read back before old versions
 // are pruned. Corrupt latest generation fails closed; it never becomes an empty state.
 class Store {
-  constructor() {this.fm=FileManager.local();this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'NUFE-Local-Scripting-v2');if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);this.token=null;this.generation=0;this.lastHeartbeat=0;}
+  constructor() {
+    this.fm=FileManager.local();
+    this.dir=this.fm.joinPath(this.fm.libraryDirectory(),'CourseSync-v2');
+    if(!this.fm.fileExists(this.dir))this.fm.createDirectory(this.dir,true);
+    this.token=null;this.generation=0;this.lastHeartbeat=0;
+    this.migrateLegacyState();
+  }
+  migrateLegacyState(){
+    const states=()=>this.fm.listContents(this.dir)
+      .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();
+    if(states().length)return;
+    const legacy=HostFiles.appGroupDocumentsDirectory+
+      '/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+    if(!this.fm.fileExists(legacy))return;
+    let oldNames;
+    try{oldNames=this.fm.listContents(legacy)
+      .filter(n=>/^state-\d{10}\.json$/.test(n)).sort();}
+    catch(_){fail('STATE_CORRUPT');}
+    if(!oldNames.length)return;
+    const lock=legacy+'/run-lock.json';
+    if(this.fm.fileExists(lock)){
+      try{
+        const owner=JSON.parse(this.fm.readString(lock));
+        if(Number.isFinite(owner?.at)&&Date.now()-owner.at<20*60000)
+          fail('BUSY');
+      }catch(e){if(e?.code==='BUSY')throw e;fail('LOCK_CORRUPT');}
+    }
+    const last=oldNames[oldNames.length-1];
+    let original;
+    try{
+      original=this.fm.readString(legacy+'/'+last);
+      assert(typeof original==='string'&&original.length<4*1024*1024,'STATE_CORRUPT');
+      validateState(JSON.parse(original));
+    }catch(_){fail('STATE_CORRUPT');}
+    const target=this.path(last);
+    this.fm.writeString(target,original);
+    assert(this.fm.readString(target)===original,'STATE_WRITE');
+    // The original files remain untouched to permit an explicit rollback.
+  }
   path(n){return this.fm.joinPath(this.dir,n);}
   read() {const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();if(!names.length)return {version:1,owner:null,calendarId:null,anchors:{},semesters:{},minutes:10,failures:0};const name=names[names.length-1];this.generation=+name.slice(6,16);try{const s=JSON.parse(this.fm.readString(this.path(name)));validateState(s);return s;}catch(_){fail('STATE_CORRUPT');}}
   write(s) {this.check();const name='state-'+String(++this.generation).padStart(10,'0')+'.json',text=JSON.stringify(s);this.fm.writeString(this.path(name),text);assert(this.fm.readString(this.path(name))===text,'STATE_WRITE');const names=this.fm.listContents(this.dir).filter(n=>/^state-\d{10}\.json$/.test(n)).sort();for(const old of names.slice(0,-4))this.fm.remove(this.path(old));}
@@ -1254,7 +1332,7 @@ async function reminders(state) {
 // the main script can access its files. Storage has a per-script domain that
 // survives separate index/widget executions, so never use shared:true here.
 // No account, student ID, cookies, keys or calendar identifiers are copied.
-const WIDGET_CACHE_KEY='NUFE.Schedule.Widget.Courses.v1';
+const WIDGET_CACHE_KEY='CourseSync.Widget.Courses.v1';
 function widgetCacheProjection(state,now=Date.now()){
   if(!state||!state.semesters||typeof state.semesters!=='object')return null;
   if(state.tx||!state.lastCheck)return null;
@@ -1394,7 +1472,7 @@ function stampStage(state,store,stage){
   state.stageHistory=[...(state.stageHistory||[]),{at,stage}].slice(-30);
   store.write(state);
   // Console is safe: stage strings and requestLabel never contain secrets.
-  if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[NUFE] '+stage);
+  if(typeof console!=='undefined'&&typeof console.log==='function')console.log('[CourseSync] '+stage);
 }
 // A foreground-only, local progress sheet. Stages are genuine completed
 // operations, not invented percentages. Keep it out of shortcut automations.
@@ -2036,7 +2114,7 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   const info=pageInfo(await coursePage(http,interactive,stage));
   // Only a verified school session ends the signed-out state.
   if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
-  const accountKey='NUFE.Local.v1.person';
+  const accountKey='CourseSync.Local.v1.person';
   if(Keychain.contains(accountKey))assert(Keychain.get(accountKey)===info.person,'ACCOUNT_CHANGED');else Keychain.set(accountKey,info.person);
   state.availableSemesters=info.semesters;store.write(state);
   // Foreground covers all school-listed terms; background rotates two older terms.
@@ -2050,7 +2128,7 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
     stage('请求学期 '+sid+' 课表数据');
     const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
     const normalized=expand(raw,sid,anchor);
-    if(normalized.studentCode){const studentKey='NUFE.Local.v1.student';if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
+    if(normalized.studentCode){const studentKey='CourseSync.Local.v1.student';if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
     let old=state.semesters[sid];
     if(interrupted&&interrupted.sid===String(sid)){const recovered=new Map([...interrupted.before,...interrupted.target].map(e=>[e.id,e]));old={...(old||{}),events:[...recovered.values()]};}
     // Recover local logical IDs from managed event notes when term index is absent.
@@ -2112,8 +2190,12 @@ async function signOut(state,store){
   store.write(state);
   try{
     if(Keychain.contains(KEY))Keychain.remove(KEY);
+    if(Keychain.contains('NUFE.Local.v1.cookies'))
+      Keychain.remove('NUFE.Local.v1.cookies');
     removeSavedCredentials();
-    if(Keychain.contains(KEY)||hasSavedCredentials())fail('CREDENTIALS_UNAVAILABLE');
+    if(Keychain.contains(KEY)||Keychain.contains('NUFE.Local.v1.cookies')||
+      hasSavedCredentials()||CloudKeychain.contains(LEGACY_CLOUD_CRED_KEY))
+      fail('CREDENTIALS_UNAVAILABLE');
   }catch(_){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
@@ -2192,8 +2274,9 @@ function canOfferSignOut(state){
   catch(_){return !state.signedOut;}
 }
 async function run() {
-  __NUFE_BOOT_PHASE='初始化本地存储';
+  __COURSESYNC_BOOT_PHASE='初始化本地存储';
   const store=new Store();
+  migrateLegacyKeychainData();
   activateEndpointSettings(loadEndpointSettings());
   let firstSetup=false;
   // A configured calendar stays configured even after explicitly logging out.
@@ -2259,7 +2342,7 @@ async function run() {
       if(!state.calendarId)fail('CALENDAR_MISSING');
     }
     state.runStatus='running';state.runStartedAt=new Date().toISOString();state.runCompletedAt=null;store.write(state);
-    __NUFE_BOOT_PHASE='同步运行';
+    __COURSESYNC_BOOT_PHASE='同步运行';
     progress=createProgress(state,store,interactive);progress('检查目标日历');
     const calendar=await pickCalendar(state,store);
     await progress.start();
@@ -2298,7 +2381,7 @@ async function run() {
       try{store.write(state);}catch(_){}
     }
     if(!interactive)await reportBackgroundFailure(code,state,store);
-    if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[NUFE] '+code+' · '+(state&&state.lastStage||'未知阶段'));
+    if(typeof console!=='undefined'&&typeof console.error==='function')console.error('[CourseSync] '+code+' · '+(state&&state.lastStage||'未知阶段'));
     if(interactive){
       if(progress)progress.finish();
       try{await showFailureRecovery(e,state,store);}
@@ -2308,7 +2391,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,showEndpointSettings,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
+if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,showEndpointSettings,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*
@@ -2991,8 +3074,8 @@ Public License instead of this License.  But first, please read
 
 */
 
-  }catch(error){await __NUFE_REPORT_STARTUP(error);}
+  }catch(error){await __COURSESYNC_REPORT_STARTUP(error);}
 }
 // Calling an async function is supported by Scripting 3.2.1's normal script loader.
 // The Promise is exposed solely for local entry-point regression tests, never credentials.
-globalThis.__NUFE_LAUNCH__=__NUFE_START();
+globalThis.__COURSESYNC_LAUNCH__=__NUFE_START();
