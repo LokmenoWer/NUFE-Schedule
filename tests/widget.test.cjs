@@ -299,14 +299,14 @@ test('temporary demo shows four invented courses per day and second class active
 
 test('large widgets expand all four today cards in two rows; medium remains compact',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
-  a.match(ui,/const showAllToday=!medium&&height>=290/);
-  a.match(ui,/showAll=\\{showAllToday\\}/);
-  a.match(ui,/const visible=showAll\\?all\\.slice\\(0,4\\):focus\\.courses/);
-  a.match(ui,/showAll&&visible\\.length>2\\?/);
-  a.match(ui,/visible\\[2\\]/);
-  a.match(ui,/visible\\[3\\]/);
-  a.match(ui,/!showAll&&focus\\.hiddenAfter>0/);
-  a.match(ui,/showAll&&remaining>0/);
+  a.ok(ui.includes('const showAllToday=!medium&&height>=290;'));
+  a.ok(ui.includes('showAll={showAllToday}'));
+  a.ok(ui.includes('const visible=showAll?all.slice(0,4):focus.courses;'));
+  a.ok(ui.includes('showAll&&visible.length>2?'));
+  a.ok(ui.includes('course={visible[2]}'));
+  a.ok(ui.includes('course={visible[3]}'));
+  a.ok(ui.includes('!showAll&&focus.hiddenAfter>0'));
+  a.ok(ui.includes('showAll&&remaining>0'));
 });
 
 test('historical preview uses the same three-day window and original weekdays',()=>{
