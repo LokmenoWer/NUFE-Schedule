@@ -8,11 +8,13 @@
 - **日历与小组件**：使用独立的课表日历；主屏幕可查看昨天、今天和明天的课程。
 - **本地运行**：登录、同步和定时触发均在设备上完成。学校 Cookie 仅存本机；成功登录后，账号密码保存至 Scripting 使用的 iCloud 可同步钥匙串。
 
-> **兼容性说明：仅验证南京财经大学教务系统。** 其他高校、其他版本教务系统及自行修改的接口均未经过验证，不保证兼容。
+> **兼容性说明：目前仅验证南京财经大学教务系统。** 其他高校、其他版本教务系统及自行修改的接口均未经过验证，不保证兼容。
 >
 > 本项目为非官方开源工具，与NUFE无隶属关系。学校接口、身份验证方式及 iOS 后台调度的变化，都可能影响同步。
 
-> 为保护已有安装，底层脚本标识、GitHub 仓库地址及稳定版 ZIP 名称继续使用 `NUFE-Schedule`。Scripting、快捷指令或小组件若仍显示旧名称，继续使用原项目即可；如更新后组件或自动化无法找到脚本，请重新选择现有脚本，**不要删除原课表日历或重新导入一份重复项目**。
+> **更名提醒：** Scripting 脚本标识与稳定版安装包均已改为 `CourseSync`。升级自 `NUFE-Schedule` 的用户，请先备份原项目和课表，更新或导入新版本并运行一次，以迁移设备上的课程数据。确认新项目正常后，再把快捷指令和桌面小组件改为 `CourseSync`；停止旧版自动化，避免两个脚本同时修改同一个日历。不要删除原课表日历。
+>
+> GitHub 仓库路径暂为 `b7f2d/NUFE-Schedule`，不影响包内的 `CourseSync` 项目标识；下载链接以本文实际地址为准。
 
 ## 用户指南
 
@@ -25,7 +27,7 @@
 2. 粘贴以下 **稳定版 Release ZIP** 地址并导入，**不要使用 GitHub 仓库源码 ZIP**。
 
    ```text
-   https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip
+   https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/CourseSync.zip
    ```
 
    <a href="docs/images/scripting-remote-zip.webp"><img src="docs/images/scripting-remote-zip.webp" alt="输入远程 ZIP 下载地址" width="330"></a>
