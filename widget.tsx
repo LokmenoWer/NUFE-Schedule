@@ -1,5 +1,5 @@
 // @ts-nocheck
-// NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
+// CourseSync Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
 import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
@@ -199,13 +199,13 @@ function SmallPanel({model}){
 function EmptyPanel({kind='empty',code=''}) {
   const failure=kind==='invalid';
   const label=failure?'缓存读取失败':'尚无课表缓存';
-  const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 NUFE-Schedule，自动建立组件缓存':
+  const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 CourseSync，自动建立组件缓存':
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
-    '打开 NUFE-Schedule 完成首次课表同步';
+    '打开 CourseSync 完成首次课表同步';
   return <VStack alignment="leading" spacing={9} padding={22}
     widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
     frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>NUFE-Schedule</Text>
+    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>CourseSync</Text>
     <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
     <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
     {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
