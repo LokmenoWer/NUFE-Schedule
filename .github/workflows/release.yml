@@ -6,7 +6,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: nufe-schedule-stable-release
+  group: coursesync-stable-release
   cancel-in-progress: false
 jobs:
   publish:
@@ -34,7 +34,7 @@ jobs:
           fi
 
           release_tag="stable"
-          archive="dist/NUFE-Schedule.zip"
+          archive="dist/CourseSync.zip"
           if gh release view "$release_tag" >/dev/null 2>&1; then
             gh release upload "$release_tag" "$archive" --clobber
             gh release edit "$release_tag" --target "$GITHUB_SHA" --title "CourseSync" --notes-file docs/release-notes.md
