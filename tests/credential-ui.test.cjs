@@ -29,15 +29,30 @@ test('native iOS credential sheet has both autofill fields and no WebView',()=>{
  assert.doesNotMatch(native,/WebView|loadURL|fetch\(|Clipboard|console\.log/);
 });
 
-test('five endpoint inputs use one native iOS sheet without embedded network code',()=>{
- assert.match(native,/export async function presentNativeEndpointForm/);
- assert.match(native,/function SchoolEndpointView/);
+test('manual refresh is a single native two-step interface then account wizard',()=>{
+ assert.match(native,/export async function presentNativeRefreshForm/);
+ assert.match(native,/function RefreshSetupView/);
+ assert.match(native,/useState<'endpoints'\|'account'>\('endpoints'\)/);
  assert.match(native,/title="统一认证根地址"/);
  assert.match(native,/title="课表数据"/);
- assert.match(native,/title="恢复默认接口"/);
- assert.match(index,/validateEndpointSettings/);
- assert.match(index,/loadEndpointSettings/);
- assert.ok(index.includes('presentNativeEndpointForm(loadEndpointSettings())'));
+ assert.match(native,/title="下一步：账号密码"/);
+ assert.match(native,/navigationTitle="账号密码"/);
+ assert.match(native,/title="开始刷新"/);
+ assert.match(native,/title="使用现有登录信息继续"/);
+ assert.match(native,/prompt=\{'留空默认使用 '\+defaults\.auth\}/);
+ assert.match(native,/prompt=\{'留空默认使用 '\+defaults\.sso\}/);
+ assert.match(native,/prompt=\{'留空默认使用 '\+defaults\.table\}/);
+ assert.match(native,/prompt=\{'留空默认使用 '\+defaults\.semester\}/);
+ assert.match(native,/prompt=\{'留空默认使用 '\+defaults\.courses\}/);
+ assert.match(native,/textContentType="username"/);
+ assert.match(native,/textContentType="password"/);
+ assert.doesNotMatch(native,/保存接口|恢复默认接口|WebView|fetch\(|Clipboard|console\.log/);
+ assert.match(index,/function prepareManualRefresh\(state\)/);
+ assert.match(index,/presentNativeRefreshForm\(ENDPOINT_DEFAULTS,allowReuse\)/);
+ assert.match(index,/custom\|\|ENDPOINT_DEFAULTS\[key\]/);
+ assert.doesNotMatch(index,/menu\.addAction\('教务接口'\)/);
+ assert.match(index,/if\(interactive&&action===0\)/);
+ assert.match(index,/if\(!manualAuth\)return;/);
 });
 
 test('native OTP and CAPTCHA keep secrets in memory and use system keyboards',()=>{
