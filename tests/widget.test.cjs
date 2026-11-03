@@ -74,7 +74,7 @@ test('widget asks for a refresh at the next class boundary without polling every
 });
 
 test('reads only latest verified generation of App Group cache without fallback to older data',()=>{
-  const dir='/group/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+  const dir='/group/CourseSync/CourseSync-v2';
   const files={
     appGroupDocumentsDirectory:'/group',
     existsSync:p=>p===dir,
@@ -90,7 +90,7 @@ test('reads only latest verified generation of App Group cache without fallback 
 });
 
 test('widget reads the same shared directory and state file as the sync engine without statSync',()=>{
- const target='/shared/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const target='/shared/CourseSync/CourseSync-v2';
  const expected=target+'/state-0000000372.json',seen=[];
  const f={
    appGroupDocumentsDirectory:'/shared',
@@ -106,7 +106,7 @@ test('widget reads the same shared directory and state file as the sync engine w
  a.deepEqual(seen,['exists:'+target,'list:'+target,'read:'+expected]);
 });
 test('widget diagnoses each cache failure stage without exposing any file contents',()=>{
- const dir='/shared/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const dir='/shared/CourseSync/CourseSync-v2';
  const base={
    appGroupDocumentsDirectory:'/shared',
    existsSync:()=>true,
@@ -131,7 +131,7 @@ test('private widget Storage mirror works even when FileManager has no App Group
    ev('a','今天上课','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')
  ]};
  const files={appGroupDocumentsDirectory:undefined};
- const storage={get:(key,opts)=>{a.equal(key,'NUFE.Schedule.Widget.Courses.v1');a.equal(opts,undefined);return mirror;}};
+ const storage={get:(key,opts)=>{a.equal(key,'CourseSync.Widget.Courses.v1');a.equal(opts,undefined);return mirror;}};
  const result=core.loadBestWidgetState(files,storage);
  a.equal(result.kind,'ready');
  a.equal(result.state.semesters.widget.events[0].title,'今天上课');
@@ -146,7 +146,7 @@ test('broken Storage mirror never discloses data and can fall back to verified f
  const valid={version:1,lastCheck:'2026-11-02T18:00:00Z',events:[]};
  a.equal(core.readWidgetMirror({get:()=>({events:[{password:'SECRET'}],version:1,lastCheck:valid.lastCheck})}).code,'STORAGE_SCHEMA');
  a.equal(core.readWidgetMirror({get:()=>{throw Error('SECRET');}}).code,'STORAGE_READ');
- const dir='/group/NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+ const dir='/group/CourseSync/CourseSync-v2';
  const files={
    appGroupDocumentsDirectory:'/group',existsSync:path=>path===dir,
    readDirectorySync:()=>['state-0000000001.json'],
