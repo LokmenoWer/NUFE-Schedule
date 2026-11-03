@@ -14,7 +14,7 @@
 
 > **更名提醒：** Scripting 脚本标识与稳定版安装包均已改为 `CourseSync`。升级自 `NUFE-Schedule` 的用户，请先备份原项目和课表，更新或导入新版本并运行一次，以迁移设备上的课程数据。确认新项目正常后，再把快捷指令和桌面小组件改为 `CourseSync`；停止旧版自动化，避免两个脚本同时修改同一个日历。不要删除原课表日历。
 >
-> GitHub 仓库路径暂为 `b7f2d/NUFE-Schedule`，不影响包内的 `CourseSync` 项目标识；下载链接以本文实际地址为准。
+> GitHub 仓库已更名为 `b7f2d/CourseSync`，请使用下文的新安装包链接。旧版本如仍使用旧项目的远程资源，需要切换至新地址。
 
 ## 用户指南
 
@@ -27,7 +27,7 @@
 2. 粘贴以下 **稳定版 Release ZIP** 地址并导入，**不要使用 GitHub 仓库源码 ZIP**。
 
    ```text
-   https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/CourseSync.zip
+   https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip
    ```
 
    <a href="docs/images/scripting-remote-zip.webp"><img src="docs/images/scripting-remote-zip.webp" alt="输入远程 ZIP 下载地址" width="330"></a>
