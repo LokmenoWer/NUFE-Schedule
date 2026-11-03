@@ -10,17 +10,17 @@ async function __NUFE_REPORT_STARTUP(error){
   const known=error&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,60}$/.test(error.code)?error.code:
     error&&error.name==='TypeError'?'STARTUP_TYPE':error&&error.name==='ReferenceError'?'STARTUP_REFERENCE':'STARTUP_FAILED';
   const message='阶段：'+__NUFE_BOOT_PHASE+'\n错误代码：'+known+'\n脚本尚未完成启动。请保留这段错误信息；不要分享密码或 Cookie。';
-  console.error('[NUFE-Schedule] '+known+' · '+__NUFE_BOOT_PHASE);
+  console.error('[CourseSync] '+known+' · '+__NUFE_BOOT_PHASE);
   try{await api('Dialog').alert({title:'课表启动失败',message});}
-  catch(_){try{await api('Notification').schedule({title:'NUFE 课表 · 启动失败',body:message,silent:true});}catch(__){}}
+  catch(_){try{await api('Notification').schedule({title:'CourseSync · 启动失败',body:message,silent:true});}catch(__){}}
   try{api('Script').exit('刷新失败：'+known);}catch(_){}
 }
 async function __NUFE_START(){
   try{
-    console.log('[NUFE-Schedule] 正在启动');
+    console.log('[CourseSync] 正在启动');
 // @ts-nocheck
 
-// NUFE-Schedule: foreground management and background shortcut synchronization.
+// CourseSync: foreground management and background shortcut synchronization.
 // Only one runtime source file. No npm packages or third-party network services.
 const hostAPI=name=>Scripting[name]??globalThis[name];
 const HostScript=hostAPI('Script')||{},HostFiles=hostAPI('FileManager')||{},HostKeys=hostAPI('Keychain')||{};
@@ -133,10 +133,10 @@ const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
 // END SCRIPTING ADAPTER
 
 // SPDX-License-Identifier: GPL-3.0-only
-// NUFE-Schedule (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
+// CourseSync (native Scripting adapter and calendar core). Derived protocol/slider logic: LokmenoWer/nufe-kebiao
 // upstream 92d6d1ba7acd86f138654e984c77bd816e5da318. See embedded GPL license at file end.
 // No remote dependencies. Opt-in credentials are stored in Scripting Keychain only, never files or logs.
-/* NUFE-Schedule：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
+/* CourseSync：index.tsx 提供前台管理，intent.tsx 提供快捷指令后台同步。
  * 使用 Scripting「运行意图脚本」触发同步，无需通过 URL 唤起 App。
  * 专用日历模式：用户授权清理绑定日历内旧导入内容；请勿绑定含个人活动的混合日历。
  * 新课表写入核验后自动备份并清理扫描范围内的无本安装标记事件（含旧循环课）。
@@ -638,13 +638,13 @@ async function fieldsFrom(html,id) {
 }
 // Passwords are entered in a native iOS sheet. No embedded HTML login page,
 // fake website domain, separate cookie store or duplicated credential bridge.
-async function fallbackCredentialForm({title='NUFE 登录'}={}){
+async function fallbackCredentialForm({title='CourseSync 登录'}={}){
   const username=(await legacyInput(title,'NUFE 学号')).trim();
   const password=await legacyInput(title,'NUFE 密码（安全输入）',true);
   if(!username||username.length>100||!password||password.length>512)fail('CREDENTIALS_INVALID');
   return {username,password};
 }
-async function credentialForm({title='NUFE 登录'}={}){
+async function credentialForm({title='CourseSync 登录'}={}){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
   let code='NATIVE_FORM_UNAVAILABLE';
   if(typeof hostAPI('Navigation')?.present==='function'){
@@ -803,7 +803,7 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
   await onStage('等待输入学校登录信息');
-  const account=await credentialForm({title:'NUFE 登录'});
+  const account=await credentialForm({title:'CourseSync 登录'});
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
   // Save only AFTER the school confirms successful authentication. The
   // user's configured default is automatic Keychain storage.
@@ -1078,7 +1078,7 @@ async function applyTransaction(tx,adapter,budget=()=>{}) {
 
 function fingerprint(events){return JSON.stringify(events.map(({id,...e})=>e));}
 function deletionReady(previous,events,now){return previous&&previous.signature===fingerprint(events)&&now-previous.at>=5*60000;}
-async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='NUFE 课表';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
+async function notify(id,body) {const n=new Notification();n.identifier='nufe-local-'+id;n.title='CourseSync';n.body=body;n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();}
 
 // Session invalidation is known only after a school's request redirects to auth.
 // Deduplicate the alert for this expired session: each scheduled run must not nag.
@@ -1086,7 +1086,7 @@ async function notifyAuthExpiredOnce(state,store) {
   if(state.authExpiryNotifiedAt)return false;
   const n=new Notification();n.identifier='nufe-local-auth-expired-'+state.owner;
   const code=state.lastError;
-  n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'NUFE 课表 · 登录需要处理':'NUFE 课表 · 登录已失效';
+  n.title=['LOGIN_SCHEMA','LOGIN_SALT_MISSING','LOGIN_EXECUTION_MISSING','MFA_UNSUPPORTED','WEBVIEW_TIMEOUT','ACCOUNT_CHANGED','CREDENTIALS_INVALID','CREDENTIALS_UNAVAILABLE'].includes(code)?'CourseSync · 登录需要处理':'CourseSync · 登录已失效';
   n.body=code==='AUTH_INTERACTIVE_REQUIRED'?'Cookie 已失效，学校要求验证码或二次认证。课表已保留，请打开 Scripting 手动验证。':
     code==='AUTO_LOGIN_REJECTED'?'Cookie 已失效，保存的账号密码未能通过学校认证。课表已保留，请在 Scripting 中更新凭据。':
     code==='CREDENTIALS_INVALID'||code==='CREDENTIALS_UNAVAILABLE'?'自动读取本地登录凭据失败。课表已保留，请在 Scripting 中检查凭据设置。':
@@ -1101,7 +1101,7 @@ async function notifyAuthExpiredOnce(state,store) {
 }
 async function testAuthNotification() {
   const n=new Notification();n.identifier='nufe-local-auth-test';
-  n.title='NUFE 课表 · 通知测试';
+  n.title='CourseSync · 通知测试';
   n.body='这是一条测试通知。学校会话失效后，定时同步会提醒你手动重新登录。';
   n.sound='default';n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});
   await n.schedule();
@@ -1331,7 +1331,7 @@ const ERROR_GUIDE={
   AUTO_LOGIN_REJECTED:['已尝试使用保存的 Keychain 凭据重新登录，但学校没有确认登录成功；可能是密码变更、账号异常或认证页面变化。','先在 Safari 验证账号，再从主菜单点击「立即刷新」并手动重新登录；不要频繁尝试。'],
   CREDENTIALS_INVALID:['本地保存的账号信息格式不正确，自动登录已停止。','点击「退出登录」，再通过「立即刷新」使用原生界面重新登录。'],
   CREDENTIALS_UNAVAILABLE:['Scripting 当前无法读取或写入本机 Keychain；可能是系统限制、权限或凭据数据损坏。','解锁 iPhone 并在 Scripting 前台重试；部分凭据操作可能不可用。'],
-  LOGOUT_INCOMPLETE:['退出时未能完全清除本机 Cookie 或同步的脚本凭据；已阻止后台继续登录。','解锁 iPhone 并检查 iCloud 钥匙串，再打开 NUFE-Schedule 重试「退出登录」。课表数据不会删除。'],
+  LOGOUT_INCOMPLETE:['退出时未能完全清除本机 Cookie 或同步的脚本凭据；已阻止后台继续登录。','解锁 iPhone 并检查 iCloud 钥匙串，再打开 CourseSync 重试「退出登录」。课表数据不会删除。'],
   WEBVIEW_TIMEOUT:['Scripting 的本机输入界面超时。脚本将优先改用系统安全输入框；不能认定账号密码有误。','如果系统安全输入仍无法完成，请重新打开 Scripting 后再试。'],
   NETWORK_TIMEOUT:['一个学校网络请求等待超过 25 秒，没有得到完整响应。','检查 Wi-Fi、蜂窝网络或 VPN，稍后单次重试。'],
   NETWORK_CHAIN_TIMEOUT:['登录/数据请求涉及多次跳转，整组请求超过 75 秒。','检查当前网络是否能打开学校登录入口，并保留阶段日志。'],
@@ -1365,7 +1365,7 @@ const ERROR_GUIDE={
   HTTP_503:['学校服务暂不可用（503）。','稍后再试。'],
   HTTP_504:['学校服务网关等待超时（504）。','稍后再试，检查学校网络状态。'],
   CALENDAR_REBIND_UNSAFE:['旧课表记录与新日历无法安全核对，自动迁移可能制造重复课程。','不要删除旧日历；先检查以前同步的课程所在日历。'],
-  CLEANUP_NO_BASELINE:['需要先有一份由 NUFE-Schedule 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
+  CLEANUP_NO_BASELINE:['需要先有一份由 CourseSync 创建且已成功写入的课程，才能安全辨认旧重复日程。','先在主菜单选择「立即刷新」完成首次同步；后续由同步流程自动核对旧课程。'],
   CLEANUP_TX_PENDING:['当前存在尚未完成的日历写入事务，不能在此时删除旧课程。','在前台选择「立即刷新」恢复未完成事务；期间不要手动删除课表日历。'],
   CLEANUP_REMOVE_FAILED:['Apple 日历未能删除某条旧课程，覆盖操作中途停止；之前已删除的部分不会自动恢复。','先查看「运行状态」和可用备份，稍后选择「立即刷新」重试；不要直接删除循环系列。'],
   CLEANUP_BACKUP_FAILED:['删除前无法保存旧日程备份，程序已拒绝执行。','检查 Scripting 本地存储空间和文件读写权限。'],
@@ -1531,7 +1531,7 @@ async function pickCalendar(state,store){
       picked=Array.isArray(selected)?selected[0]:null;
       assert(picked&&liveCalendar(picked)&&all.some(c=>c.identifier===picked.identifier),'CALENDAR_MISSING');
       if(!await confirm('确认目标日历',
-        '已选择「'+picked.title+'」。此日历只能用于 NUFE-Schedule，不能混放私人活动；后续同步可能清理其中的旧内容。是否确认？'))fail('CANCELLED');
+        '已选择「'+picked.title+'」。此日历只能用于 CourseSync，不能混放私人活动；后续同步可能清理其中的旧内容。是否确认？'))fail('CANCELLED');
       store.check();
       // A different existing calendar must prove ownership before adoption.
       // Never infer ownership from name or course titles alone.
@@ -2102,7 +2102,7 @@ async function loginPreflight(state,store,progress){
 async function signOut(state,store){
   // Saved credentials and the local authenticated session are separate.
   if(!await confirm('退出登录',
-    '将清除本机学校登录 Cookie 和 NUFE-Schedule 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
+    '将清除本机学校登录 Cookie 和 CourseSync 保存的账号密码。iCloud 同步的脚本凭据也会删除（其他设备可能仍有自己的 Cookie）；iOS「密码」App 已保存的网站密码不受影响。现有课表与日历不会删除。'))return false;
 
   // Persist a fail-closed marker before touching the Keychain, so scheduled
   // refreshes cannot silently sign back in even if deletion partially fails.
@@ -2118,11 +2118,11 @@ async function signOut(state,store){
     // Stay signed out and offer retry rather than declaring a false success.
     fail('LOGOUT_INCOMPLETE');
   }
-  try{await notice('已退出登录','已清除本机会话和 NUFE-Schedule 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
+  try{await notice('已退出登录','已清除本机会话和 CourseSync 保存的凭据。下次手动刷新将重新登录；已同步课程和日历均保留。');}catch(_){}
   return true;
 }
 async function refreshResult(ok,code=null){
-  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'NUFE 课表 · 部分完成':'NUFE 课表 · 刷新'+(ok?'成功':'失败');
+  const n=new Notification();n.identifier='nufe-local-refresh-result';n.title=code==='PARTIAL_SYNC'?'CourseSync · 部分完成':'CourseSync · 刷新'+(ok?'成功':'失败');
   n.body=code==='PARTIAL_SYNC'?'已更新可用学期，部分旧学期尚未完成；请在管理界面查看详情。':ok?'课表已更新并重新扫描核验。':('原因：'+reasonFor(code||'LOCAL_ERROR'));
   n.sound=null;n.openURL=HostScript.createRunURLScheme(HostScript.name,{mode:'menu'});await n.schedule();
 }
@@ -2207,7 +2207,7 @@ async function run() {
       state=store.read();
       // Heal the widget cache from existing verified state even without network.
       publishWidgetCache(state);
-      const menu=new Alert();menu.title='NUFE 课表';
+      const menu=new Alert();menu.title='CourseSync';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
       menu.addAction('教务接口');
@@ -2276,7 +2276,7 @@ async function run() {
     progress('完成本次同步');state.runStatus=state.termErrors?.length?'partial':'success';state.runCompletedAt=new Date().toISOString();store.write(state);
     if(progress)progress.finish();
     if(interactive)await notice('刷新成功','已完成可用学期的课表更新和核验。');else await reportRefreshResult(!state.termErrors?.length,state.termErrors?.length?'PARTIAL_SYNC':null,state,store);
-    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：NUFE 课表已更新并核验。');
+    if(config.runsWithSiri)Script.setShortcutOutput(state.termErrors?.length?'部分完成：部分旧学期未同步，请前台核查。':'刷新成功：CourseSync已更新并核验。');
   }catch(e){
     const code=diagnosticCode(e);
     if(code==='SYNC_SUPERSEDED'){
