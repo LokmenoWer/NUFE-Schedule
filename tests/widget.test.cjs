@@ -505,7 +505,7 @@ test('README documents the actual three-day UI and retains installation screensh
  for(const file of ['scripting-import-menu.webp','scripting-remote-zip.webp','scripting-project-card.webp','shortcuts-automation.webp','scripting-refresh-menu.webp']){
   a.match(readme,new RegExp('docs/images/'+file.replaceAll('.','\\.')));
  }
- a.match(readme,/releases\/download\/stable\/NUFE-Schedule\.zip/);
+ a.match(readme,/releases\/download\/stable\/CourseSync\.zip/);
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });
