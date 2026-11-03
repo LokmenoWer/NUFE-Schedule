@@ -975,7 +975,7 @@ test('source omits obsolete school name and supports existing calendar aliases',
  const oldName=String.fromCharCode(0x5357,0x8d22);
  const fullName=String.fromCharCode(0x5357,0x4eac,0x8d22,0x7ecf,0x5927,0x5b66);
  a.equal(source.includes(oldName),false);
- a.equal(source.includes(fullName),true); // Explicit school name in interface settings is intentional.
+ a.equal(source.includes(fullName),false); // School-specific compatibility belongs in README, not application UI.
  a.ok(source.includes('LEGACY_CALENDAR_TITLE'));
 });
 
