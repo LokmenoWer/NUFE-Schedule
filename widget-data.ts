@@ -287,7 +287,22 @@ export function selectTodayPair(day){
   return {courses:shown,hiddenAfter:Math.max(0,courses.length-at-shown.length)};
 }
 
-// TEMPORARY WIDGET-ONLY DEMO: three invented courses on each of
+// Today: exactly one focused lesson on the left, followed by not-yet-started
+// lessons on the right. Never bring completed lessons back into the display.
+export function selectTodayColumns(day,maxFuture=1){
+  const courses=Array.isArray(day?.courses)?day.courses:[];
+  if(!courses.length)return {focus:null,future:[],hiddenAfter:0};
+  let at=courses.findIndex(c=>c.status==='current');
+  if(at<0)at=courses.findIndex(c=>c.status==='upcoming');
+  // After all lessons end, show only the last completed lesson.
+  if(at<0)return {focus:courses[courses.length-1],future:[],hiddenAfter:0};
+  const future=courses.slice(at+1).filter(c=>c.status==='upcoming');
+  const count=Math.max(0,Math.min(5,Math.trunc(Number(maxFuture)||0)));
+  return {focus:courses[at],future:future.slice(0,count),
+    hiddenAfter:Math.max(0,future.length-count)};
+}
+
+// TEMPORARY WIDGET-ONLY DEMO: four invented courses on each of
 // yesterday, today and tomorrow. The real timetable and calendar sync are
 // never changed. widget.tsx decides whether to display this projection.
 export function buildSamplePreview(now=Date.now()){
