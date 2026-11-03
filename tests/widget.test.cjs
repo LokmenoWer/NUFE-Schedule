@@ -274,25 +274,39 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
-test('temporary demo shows three invented courses per day without changing live state',()=>{
+test('temporary demo shows four invented courses per day and second class active',()=>{
   const now=date('2026-11-03T14:20:00Z'); // Tuesday night in Beijing
   const demo=core.buildSamplePreview(now);
-  a.equal(demo.previewTerm,'sample-3x3');
+  a.equal(demo.previewTerm,'sample-4x3');
   a.deepEqual(Array.from(demo.days,x=>x.label),['昨天','今天','明天']);
-  a.deepEqual(Array.from(demo.days,x=>x.courses.length),[3,3,3]);
-  a.equal(demo.courses.length,9);
+  a.deepEqual(Array.from(demo.days,x=>x.courses.length),[4,4,4]);
+  a.equal(demo.courses.length,12);
   a.ok(demo.days[0].courses.every(x=>x.status==='done'));
-  a.equal(demo.days[1].courses[0].status,'current');
+  a.deepEqual(Array.from(demo.days[1].courses,x=>x.status),
+    ['done','current','upcoming','upcoming']);
   a.ok(demo.days[2].courses.every(x=>x.status==='upcoming'));
   a.deepEqual(Array.from(core.selectTodayPair(demo.days[1]).courses,x=>x.title),
-    ['财务会计学','金融计量学（双语）']);
+    ['金融计量学（双语）','国际经济与贸易专题']);
   a.equal(core.selectTodayPair(demo.days[1]).hiddenAfter,1);
-  a.equal(core.selectVisibleCourses(demo.days[0],1).hiddenAfter,2);
+  a.equal(core.selectVisibleCourses(demo.days[0],1).hiddenAfter,3);
+  a.equal(core.selectVisibleCourses(demo.days[2],2).hiddenAfter,2);
   a.equal(demo.at,now);
   a.equal(demo.nextAt,date('2026-11-03T16:00:00Z'));
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.match(ui,/const SHOW_SAMPLE_COURSES=true/);
   a.ok(ui.includes('buildSamplePreview(Date.now())'));
+});
+
+test('large widgets expand all four today cards in two rows; medium remains compact',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.match(ui,/const showAllToday=!medium&&height>=290/);
+  a.match(ui,/showAll=\\{showAllToday\\}/);
+  a.match(ui,/const visible=showAll\\?all\\.slice\\(0,4\\):focus\\.courses/);
+  a.match(ui,/showAll&&visible\\.length>2\\?/);
+  a.match(ui,/visible\\[2\\]/);
+  a.match(ui,/visible\\[3\\]/);
+  a.match(ui,/!showAll&&focus\\.hiddenAfter>0/);
+  a.match(ui,/showAll&&remaining>0/);
 });
 
 test('historical preview uses the same three-day window and original weekdays',()=>{
