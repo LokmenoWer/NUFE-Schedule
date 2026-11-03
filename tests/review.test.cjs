@@ -797,7 +797,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
-   return 2; // direct destructive logout
+   return 3; // direct destructive logout
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    a.match(options.message,/Cookie/);
@@ -806,7 +806,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('NUFE.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -821,7 +821,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -848,7 +848,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
@@ -887,7 +887,7 @@ test('source omits obsolete school name and supports existing calendar aliases',
  const oldName=String.fromCharCode(0x5357,0x8d22);
  const fullName=String.fromCharCode(0x5357,0x4eac,0x8d22,0x7ecf,0x5927,0x5b66);
  a.equal(source.includes(oldName),false);
- a.equal(source.includes(fullName),false);
+ a.equal(source.includes(fullName),true); // Explicit school name in interface settings is intentional.
  a.ok(source.includes('LEGACY_CALENDAR_TITLE'));
 });
 
