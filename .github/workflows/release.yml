@@ -38,6 +38,8 @@ jobs:
           if gh release view "$release_tag" >/dev/null 2>&1; then
             gh release upload "$release_tag" "$archive" --clobber
             gh release edit "$release_tag" --target "$GITHUB_SHA" --title "CourseSync" --notes-file docs/release-notes.md
+            # Remove the superseded legacy asset only after the replacement is uploaded.
+            gh release delete-asset "$release_tag" "NUFE-Schedule.zip" --yes >/dev/null 2>&1 || true
           else
             gh release create "$release_tag" "$archive" \
               --target "$GITHUB_SHA" \
