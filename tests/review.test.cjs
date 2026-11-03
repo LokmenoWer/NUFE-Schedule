@@ -255,58 +255,62 @@ test('NUFE endpoint settings keep default URLs and validate academic paths',asyn
   a.throws(()=>m.validateEndpointSettings({...d,auth:d.sso}),code('ENDPOINT_CONFIG'));
 });
 
-test('manual refresh blanks choose default NUFE endpoints and discard hidden overrides',async()=>{
-  const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints',d=e.m.ENDPOINT_DEFAULTS;
-  e.keys.set(key,JSON.stringify({version:1,values:{...d,
+test('only Nanjing University of Finance and Economics is whitelisted',async()=>{
+  const {m}=await env();
+  a.deepEqual(Array.from(m.SCHOOL_WHITELIST,s=>s.name),['南京财经大学']);
+  a.equal(m.SCHOOL_WHITELIST[0].id,'nufe');
+  a.equal(m.schoolById('nufe').endpoints.table,m.ENDPOINT_DEFAULTS.table);
+  a.equal(m.schoolById('unverified-university'),null);
+  a.equal(m.loadSelectedSchool(),'nufe');
+});
+
+test('manual school selection uses fixed endpoints and retires old custom URLs',async()=>{
+  const e=await env({hostEnv:'index'}),m=e.m,d=m.ENDPOINT_DEFAULTS;
+  const oldKey='CourseSync.Local.v1.school-endpoints';
+  const schoolKey='CourseSync.Local.v1.school';
+  e.keys.set(oldKey,JSON.stringify({version:1,values:{...d,
     table:'https://jwxt.nufe.edu.cn/student/for-std/course-table-v2'}}));
-  const seen=[];
-  e.sandbox.__nativeRefreshMock=async(defaults,allowReuse)=>{
-    seen.push({defaults,allowReuse});
-    return {kind:'credentials',username:'local-user',password:'not-a-real-password',
-      values:{auth:'',sso:'',table:'',semester:'',courses:''}};
+  const calls=[];
+  e.sandbox.__nativeRefreshMock=async(schools,selectedId,allowReuse)=>{
+    calls.push({schools,selectedId,allowReuse});
+    return {kind:'credentials',schoolId:'nufe',
+      username:'local-user',password:'not-a-real-password'};
   };
-  const auth=await e.m.prepareManualRefresh(e.state);
-  a.equal(auth.kind,'credentials');
-  a.equal(auth.username,'local-user');
-  a.equal(auth.password,'not-a-real-password');
-  a.equal(e.m.loadEndpointSettings().table,d.table);
-  a.equal(e.keys.has(key),false);
+  const result=await m.prepareManualRefresh(e.state);
+  a.equal(result.kind,'credentials');
+  a.equal(result.username,'local-user');
+  a.equal(result.password,'not-a-real-password');
+  a.equal(m.loadEndpointSettings().table,d.table);
+  a.equal(e.keys.has(oldKey),false);
+  a.equal(e.keys.get(schoolKey),'nufe');
+  a.deepEqual(Array.from(calls[0].schools,s=>s.name),['南京财经大学']);
+  a.equal(calls[0].selectedId,'nufe');
+  a.equal(calls[0].allowReuse,false);
   a.equal(e.db.length,0);
   a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
-  a.equal(seen.length,1);
-  a.equal(seen[0].defaults.auth,d.auth);
-  a.equal(seen[0].allowReuse,false);
 });
-test('manual custom HTTPS paths save locally and are used by background refresh',async()=>{
-  const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints',d=e.m.ENDPOINT_DEFAULTS;
-  const chosen='https://jwxt.nufe.edu.cn/student/for-std/course-table-v2';
+
+test('school selection with existing credentials can reuse them',async()=>{
+  const e=await env({hostEnv:'index'}),m=e.m;
   e.keys.set('CourseSync.Local.v1.cookies','[]');
-  e.sandbox.__nativeRefreshMock=async()=>({
-    kind:'reuse',values:{auth:'',sso:'',table:chosen,semester:'',courses:''}
-  });
-  const result=await e.m.prepareManualRefresh(e.state);
-  a.equal(result.kind,'reuse');
-  a.equal(JSON.parse(e.keys.get(key)).values.table,chosen);
-  a.equal(e.m.loadEndpointSettings().table,chosen);
-  a.equal(e.db.length,0);
-  a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
+  e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});
+  a.equal((await m.prepareManualRefresh(e.state)).kind,'reuse');
+  a.equal(e.keys.get('CourseSync.Local.v1.school'),'nufe');
 });
-test('manual refresh rejects unknown hosts without saving or sending credentials',async()=>{
-  const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints';
-  e.sandbox.__nativeRefreshMock=async()=>({
-    kind:'credentials',username:'local-user',password:'secret',
-    values:{auth:'',sso:'',table:'https://evil.test/student/login',semester:'',courses:''}
-  });
-  await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('ENDPOINT_CONFIG'));
-  a.equal(e.keys.has(key),false);
+
+test('unsupported school selection is rejected without saving any configuration',async()=>{
+  const e=await env({hostEnv:'index'});
+  e.sandbox.__nativeRefreshMock=async()=>({kind:'credentials',
+    schoolId:'not-whitelisted',username:'student',password:'secret'});
+  await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('SCHOOL_UNSUPPORTED'));
+  a.equal(e.keys.has('CourseSync.Local.v1.school'),false);
   a.equal(e.requests.length,0);
 });
-test('cancel in the manual refresh wizard does not change endpoints or credentials',async()=>{
+test('cancel school selection leaves credentials and configuration unchanged',async()=>{
   const e=await env({hostEnv:'index'});
   e.sandbox.__nativeRefreshMock=async()=>null;
   const before=JSON.stringify([...e.keys]);
-  const result=await e.m.prepareManualRefresh(e.state);
-  a.equal(result,null);
+  a.equal(await e.m.prepareManualRefresh(e.state),null);
   a.equal(JSON.stringify([...e.keys]),before);
   a.equal(e.requests.length,0);
 });
