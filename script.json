@@ -3,5 +3,10 @@
   "version": "0.0.0",
   "icon": "calendar",
   "color": "#2456A6",
-  "description": "NUFE 课表同步至 Apple 日历，支持快捷指令自动更新。"
+  "description": "CourseSync: local timetable synchronization with Apple Calendar and Shortcuts.",
+  "localizedNames": {
+    "en": "CourseSync",
+    "zh": "CourseSync",
+    "zh-CN": "CourseSync"
+  }
 }
