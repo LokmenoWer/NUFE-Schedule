@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm, presentNativeTextForm, presentNativeEndpointForm } from './login-native';
+import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';
 import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __COURSESYNC_BOOT_PHASE='初始化运行接口';
@@ -349,34 +349,38 @@ function termEndpoint(template,sid){
   const url=template.replace('{sid}',id);
   safeURL(url);return url;
 }
-async function showEndpointSettings(){
+// Manual refresh wizard: blank endpoint fields explicitly choose the bundled
+// NUFE defaults. Never retain a hidden custom override when all are blank.
+async function prepareManualRefresh(state){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  const allowReuse=!state?.signedOut&&canOfferSignOut(state);
   let response;
-  try{response=await presentNativeEndpointForm(loadEndpointSettings());}
+  try{response=await presentNativeRefreshForm(ENDPOINT_DEFAULTS,allowReuse);}
   catch(_){fail('ENDPOINT_UI');}
-  if(!response)return;
-  if(response.kind==='reset'){
-    if(!await confirm('恢复默认接口','将恢复南京财经大学教务系统的五个默认地址，不清除课程、日历或账号密码。'))return;
-    try{
+  if(!response)return null; // Native cancel: do not start or mutate a sync.
+  const chosen={};
+  for(const key of Object.keys(ENDPOINT_DEFAULTS)){
+    const custom=response.values?.[key];
+    assert(typeof custom==='string'&&custom===custom.trim(),'ENDPOINT_CONFIG');
+    chosen[key]=custom||ENDPOINT_DEFAULTS[key];
+  }
+  const settings=validateEndpointSettings(chosen);
+  try{
+    if(Object.keys(settings).every(k=>settings[k]===ENDPOINT_DEFAULTS[k])){
       if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
       if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
-    }catch(_){fail('ENDPOINT_STORAGE');}
-    activateEndpointSettings(ENDPOINT_DEFAULTS);
-    await notice('接口设置','已恢复默认接口。下次刷新生效。');
-    return;
-  }
-  assert(response.kind==='save','ENDPOINT_CONFIG');
-  const values=validateEndpointSettings(response.values);
-  const old=loadEndpointSettings();
-  if(Object.keys(values).every(k=>values[k]===old[k]))return;
-  if(!await confirm('保存教务接口','仅接受南京财经大学两个已验证域名内的 HTTPS 地址。错误的接口路径可能导致刷新失败；现有课程和日历不会被删除。'))return;
-  try{
-    const raw=JSON.stringify({version:1,values});
-    Keychain.set(ENDPOINT_KEY,raw);
-    if(Keychain.get(ENDPOINT_KEY)!==raw)fail('ENDPOINT_STORAGE');
+    }else{
+      const value=JSON.stringify({version:1,values:settings});
+      Keychain.set(ENDPOINT_KEY,value);
+      if(Keychain.get(ENDPOINT_KEY)!==value)fail('ENDPOINT_STORAGE');
+    }
   }catch(_){fail('ENDPOINT_STORAGE');}
-  activateEndpointSettings(values);
-  await notice('接口设置','接口已保存，下次刷新生效。');
+  activateEndpointSettings(settings);
+  if(response.kind==='reuse')return {kind:'reuse'};
+  assert(response.kind==='credentials'&&typeof response.username==='string'&&
+    typeof response.password==='string'&&response.username.length<=100&&
+    response.password.length>0&&response.password.length<=512,'CREDENTIALS_INVALID');
+  return {kind:'credentials',username:response.username,password:response.password};
 }
 
 function topId(html, name) {
@@ -825,7 +829,7 @@ async function passwordLogin(http,r,username,password,interactive,onStage=()=>{}
     return r.text;
   }finally{password='';}
 }
-async function coursePage(http,interactive,onStage=()=>{}) {
+async function coursePage(http,interactive,onStage=()=>{},manualAuth=null) {
   onStage('尝试读取教务课表入口');
   let r;try{r=await http.get(TABLE);try{pageInfo(r.text);return r.text;}catch(_){}}catch(e){if(e.code!=='AUTH_REQUIRED')throw e;}
   // Explicit SSO is needed: student/login does not redirect itself to CAS.
@@ -842,12 +846,23 @@ async function coursePage(http,interactive,onStage=()=>{}) {
     onStage('Cookie 已失效，尝试使用 Keychain 凭据自动登录');
     return await passwordLogin(http,r,saved.username,saved.password,false,onStage);
   }
+  // Credentials were entered in the second step of the manual refresh sheet.
+  // Reuse takes the stored credentials only if the verified cookie has expired.
   await onStage('等待输入学校登录信息');
-  const account=await credentialForm({title:'CourseSync 登录'});
+  let account=null,shouldSave=false;
+  if(manualAuth?.kind==='credentials'){
+    account=manualAuth;shouldSave=true;
+  }else if(manualAuth?.kind==='reuse'){
+    account=readSavedCredentials();
+  }
+  if(!account){
+    account=await credentialForm({title:'CourseSync 登录'});
+    shouldSave=true;
+  }
   const page=await passwordLogin(http,r,account.username,account.password,true,onStage);
-  // Save only AFTER the school confirms successful authentication. The
-  // user's configured default is automatic Keychain storage.
-  saveCredentials(account.username,account.password);
+  // Save only AFTER the school confirms successful authentication.
+  if(shouldSave)saveCredentials(account.username,account.password);
+  if(manualAuth?.kind==='credentials')manualAuth.password='';
   return page;
 }
 // Immutable generation files: a new file is written and read back before old versions
@@ -2099,7 +2114,7 @@ function selectTermIds(info,state,allTerms){
   state.cursor=(start+count)%rest.length;
   return [info.current,...selected];
 }
-async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null) {
+async function synchronize(state,store,calendar,interactive,allTerms=false,progress=null,manualAuth=null) {
   // Auto reauthentication needs several requests. iOS may still impose a shorter runtime.
   const begun=Date.now(),limit=interactive?15*60000:(hasSavedCredentials()?90000:20000);
   const budget=()=>{store.check();if(Date.now()-begun>limit)fail('BUDGET');};
@@ -2111,7 +2126,7 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
   const jar=state.signedOut?new CookieJar():readCookieJar();
   const stage=progress||((message)=>stampStage(state,store,message));
   const http=new HTTP(jar,c=>Keychain.set(KEY,JSON.stringify(c)),budget,stage);
-  const info=pageInfo(await coursePage(http,interactive,stage));
+  const info=pageInfo(await coursePage(http,interactive,stage,manualAuth));
   // Only a verified school session ends the signed-out state.
   if(state.signedOut){state.signedOut=false;state.authPaused=false;state.authExpiryNotifiedAt=null;state.lastError=null;store.write(state);}
   const accountKey='CourseSync.Local.v1.person';
@@ -2284,7 +2299,7 @@ async function run() {
   if(firstSetup)args.shortcutParameter='setup';
   const parameter=String(args.shortcutParameter||'').trim();
   const scheduled=/^sync(?:$|\s)/.test(parameter),interactive=config.runsInApp&&!scheduled;
-  let state,locked=false,progress=null,action=0;
+  let state,locked=false,progress=null,action=0,manualAuth=null;
   try {
     if(interactive&&!firstSetup){
       state=store.read();
@@ -2293,7 +2308,6 @@ async function run() {
       const menu=new Alert();menu.title='CourseSync';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
-      menu.addAction('教务接口');
       if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
@@ -2303,8 +2317,7 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===2){await showEndpointSettings();return;}
-      if(selected===3)action=13;
+      if(selected===2)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -2334,6 +2347,10 @@ async function run() {
     }
     if(action===13){await signOut(state,store);return;}
     if(action===5){await clearBrokenCookies(state,store);return;}
+    if(interactive&&action===0){
+      manualAuth=await prepareManualRefresh(state);
+      if(!manualAuth)return; // Cancel was handled within the native sheet.
+    }
     if(!interactive){
       // Manual logout is intentional and must never cause background login or warning spam.
       if(state.signedOut){if(config.runsWithSiri)Script.setShortcutOutput('已退出登录，请在 Scripting 中手动刷新并重新登录。');return;}
@@ -2347,7 +2364,7 @@ async function run() {
     const calendar=await pickCalendar(state,store);
     await progress.start();
     progress('连接教务系统');
-    await synchronize(state,store,calendar,interactive,interactive,progress);
+    await synchronize(state,store,calendar,interactive,interactive,progress,manualAuth);
     publishWidgetCache(state);
     // WidgetKit prefers the lightweight Storage mirror and may also use the
     // original App Group snapshot if its path is exposed in this context. Reload requests
@@ -2388,10 +2405,10 @@ async function run() {
       catch(recoveryError){await notice('恢复操作未完成','原始错误：'+code+'；恢复操作错误：'+diagnosticCode(recoveryError)+'。日历与账号数据未由此操作清理。');}
     }
     else if(config.runsWithSiri)Script.setShortcutOutput('刷新失败。'+errorMessage(e,state));
-  }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
+  }finally{if(manualAuth?.password)manualAuth.password='';if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,showEndpointSettings,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
+if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*
