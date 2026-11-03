@@ -3,7 +3,7 @@
 // Passwords remain in memory only until caller authenticates or discards them.
 import {
   Navigation, NavigationStack, List, Section, Text,
-  TextField, SecureField, Button, Image, useState,
+  TextField, SecureField, Button, Image, Picker, useState,
 } from 'scripting';
 
 function LoginView({ title }: { title: string }) {
@@ -127,89 +127,39 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
 }
 
 
-// The manual refresh wizard uses one native sheet: endpoints first, then
-// account/password (or reuse of an existing trusted session). No web requests
-// or credential storage are performed by this UI.
-export type NativeSchoolEndpoints={
-  auth:string;
-  sso:string;
-  table:string;
-  semester:string;
-  courses:string;
-};
+// Native two-step flow. School selection is a whitelist, not a URL editor.
+export type NativeSchoolChoice = {id:string;name:string};
 type RefreshFormOutcome=
-  | {kind:'credentials';values:NativeSchoolEndpoints;username:string;password:string}
-  | {kind:'reuse';values:NativeSchoolEndpoints};
+  | {kind:'credentials';schoolId:string;username:string;password:string}
+  | {kind:'reuse';schoolId:string};
 
-function validSchoolOverride(raw:string,key:keyof NativeSchoolEndpoints):boolean{
-  const value=raw.trim();
-  if(!value)return true;
-  if(value.length>220||raw!==value)return false;
-  const template=key==='semester'||key==='courses';
-  if(value.split('{sid}').length!==(template?2:1))return false;
-  const checked=template?value.replace('{sid}','123'):value;
-  if(!/^https:\/\/(?:authserver\.nufe\.edu\.cn|jwxt\.nufe\.edu\.cn)\/[A-Za-z0-9_./-]+$/.test(checked)||
-      checked.slice(8).includes('//')||
-      checked.split('/').some(p=>p==='.'||p==='..'))return false;
-  if(key==='auth')return /^https:\/\/authserver\.nufe\.edu\.cn\/authserver(?:\/|$)/.test(checked);
-  return checked.startsWith('https://jwxt.nufe.edu.cn/student/');
-}
-
-function RefreshSetupView({defaults,allowReuse}:{
-  defaults:NativeSchoolEndpoints;allowReuse:boolean;
+function RefreshSetupView({schools,initialSchoolId,allowReuse}:{
+  schools:NativeSchoolChoice[];initialSchoolId:string;allowReuse:boolean;
 }){
   const dismiss=Navigation.useDismiss();
-  const [step,setStep]=useState<'endpoints'|'account'>('endpoints');
-  const [auth,setAuth]=useState('');
-  const [sso,setSso]=useState('');
-  const [table,setTable]=useState('');
-  const [semester,setSemester]=useState('');
-  const [courses,setCourses]=useState('');
+  const [step,setStep]=useState<'school'|'account'>('school');
+  const [schoolId,setSchoolId]=useState(initialSchoolId);
   const [username,setUsername]=useState('');
   const [password,setPassword]=useState('');
-  const values={auth:auth.trim(),sso:sso.trim(),table:table.trim(),
-    semester:semester.trim(),courses:courses.trim()};
-  const validEndpoints=(Object.keys(values) as Array<keyof NativeSchoolEndpoints>)
-    .every(key=>validSchoolOverride(values[key],key));
+  const validSchool=schools.some(s=>s.id===schoolId);
   const account=username.trim();
   const validAccount=account.length>0&&account.length<=100&&
     password.length>0&&password.length<=512;
-  const back=()=>step==='endpoints'?dismiss(null):setStep('endpoints');
-
+  const back=()=>step==='school'?dismiss(null):setStep('school');
   return <NavigationStack>
-    {step==='endpoints'?
-      <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
+    {step==='school'?
+      <List navigationTitle="选择学校" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
-        <Section header={<Text>默认接口</Text>}
-          footer={<Text>{validEndpoints?'全部留空即使用内置的默认接口地址。':
-            '接口地址格式不正确，请检查 HTTPS、学校域名和接口路径。'}</Text>}>
-          <TextField title="统一认证根地址"
-            prompt={'留空默认使用 '+defaults.auth}
-            value={auth} onChanged={setAuth}
-            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-          <TextField title="SSO 登录入口"
-            prompt={'留空默认使用 '+defaults.sso}
-            value={sso} onChanged={setSso}
-            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-          <TextField title="课表页面"
-            prompt={'留空默认使用 '+defaults.table}
-            value={table} onChanged={setTable}
-            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-        </Section>
-        <Section header={<Text>课程数据接口</Text>}
-          footer={<Text>学期 ID 由程序自动填写；自定义接口里的 {'{sid}'} 必须保留。此页不会访问网络。</Text>}>
-          <TextField title="学期详情"
-            prompt={'留空默认使用 '+defaults.semester}
-            value={semester} onChanged={setSemester}
-            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
-          <TextField title="课表数据"
-            prompt={'留空默认使用 '+defaults.courses}
-            value={courses} onChanged={setCourses}
-            textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        <Section header={<Text>请选择你的学校</Text>}
+          footer={<Text>当前仅支持白名单内的学校。选定后将自动使用预设的认证和课表接口，无需手动填写链接。</Text>}>
+          <Picker title="学校" pickerStyle="menu"
+            value={schoolId} onChanged={setSchoolId}>
+            {schools.map(s=><Text key={s.id} tag={s.id}>{s.name}</Text>)}
+          </Picker>
         </Section>
         <Section>
-          <Button title="下一步：账号密码" disabled={!validEndpoints}
-            action={()=>{if(validEndpoints)setStep('account');}}/>
+          <Button title="下一步：账号密码" disabled={!validSchool}
+            action={()=>{if(validSchool)setStep('account');}}/>
         </Section>
       </List>:
       <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
@@ -221,31 +171,31 @@ function RefreshSetupView({defaults,allowReuse}:{
           <SecureField title="密码" prompt="请输入密码" value={password}
             onChanged={setPassword} textContentType="password"/>
         </Section>
-        <Section footer={<Text>账号密码只会在学校要求重新认证时使用，认证成功后才会保存。可使用 iOS「密码」自动填充；切换账号请先退出原账号。</Text>}>
+        <Section footer={<Text>仅在学校要求重新认证时提交登录信息，验证成功后才会保存；支持 iOS「密码」自动填充。</Text>}>
           <Button title="开始刷新" disabled={!validAccount}
-            action={()=>{if(validAccount)dismiss({
-              kind:'credentials',values,username:account,password
+            action={()=>{if(validAccount&&validSchool)dismiss({
+              kind:'credentials',schoolId,username:account,password
             });}}/>
           {allowReuse?<Button title="使用现有登录信息继续"
-            action={()=>dismiss({kind:'reuse',values})}/>:null}
+            disabled={!validSchool}
+            action={()=>{if(validSchool)dismiss({kind:'reuse',schoolId});}}/>:null}
         </Section>
       </List>}
   </NavigationStack>;
 }
 
-export async function presentNativeRefreshForm(defaults:NativeSchoolEndpoints,
-  allowReuse=false):Promise<RefreshFormOutcome|null>{
+export async function presentNativeRefreshForm(schools:NativeSchoolChoice[],
+  initialSchoolId:string,allowReuse=false):Promise<RefreshFormOutcome|null>{
   const result=await Navigation.present({
-    element:<RefreshSetupView defaults={defaults} allowReuse={allowReuse}/>,
+    element:<RefreshSetupView schools={schools} initialSchoolId={initialSchoolId}
+      allowReuse={allowReuse}/>,
     modalPresentationStyle:'pageSheet'
   });
   if(!result||!['credentials','reuse'].includes(result.kind))return null;
-  const values=result.values;
-  if(!values||!['auth','sso','table','semester','courses'].every(
-    key=>typeof values[key]==='string'&&values[key].length<=220))return null;
-  if(result.kind==='reuse')return {kind:'reuse',values};
+  if(!schools.some(s=>s.id===result.schoolId))return null;
+  if(result.kind==='reuse')return {kind:'reuse',schoolId:result.schoolId};
   const username=typeof result.username==='string'?result.username.trim():'';
   const password=typeof result.password==='string'?result.password:'';
   if(!username||username.length>100||!password||password.length>512)return null;
-  return {kind:'credentials',values,username,password};
+  return {kind:'credentials',schoolId:result.schoolId,username,password};
 }
