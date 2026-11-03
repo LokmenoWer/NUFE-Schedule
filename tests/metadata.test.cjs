@@ -36,7 +36,7 @@ test('README distinguishes public CourseSync name from legacy installation ident
 
 test('README explicitly states verification is limited to the NUFE academic system',()=>{
   assert.match(read('README.md'),/目前仅验证南京财经大学教务系统/);
-  assert.match(read('README.md'),/教务接口/);
+  assert.match(read('README.md'),/请选择你的学校/);
 });
 
 test('README remains text-only without image markup or references',()=>{
