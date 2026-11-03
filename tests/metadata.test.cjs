@@ -41,7 +41,11 @@ test('README explicitly states verification is limited to the NUFE academic syst
 
 test('README remains text-only without image markup or references',()=>{
   const readme=read('README.md');
-  assert.doesNotMatch(readme,/<img\\b|<picture\\b|<svg\\b|!\\[[^\\]]*\\]\\(|docs\\/images\\//i);
+  assert.equal(readme.includes('<img'),false);
+  assert.equal(readme.includes('<picture'),false);
+  assert.equal(readme.includes('<svg'),false);
+  assert.equal(readme.includes('docs/images/'),false);
+  assert.equal(readme.includes('!['),false);
   assert.match(readme,/目前仅验证南京财经大学教务系统/);
 });
 
