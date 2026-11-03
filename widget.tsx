@@ -94,10 +94,13 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
   </VStack>;
 }
 
-// Two actual course columns inside an expanded today area, not an
-// animated/scrolling list. The second card owns the remaining-course count.
-function TodayPairColumn({day,width,compact=false,gap=5}){
+// Two columns for today's lessons. On large widgets, use a second row
+// to show the third and fourth lessons rather than wasting vertical space.
+function TodayPairColumn({day,width,compact=false,gap=5,showAll=false}){
   const focus=selectTodayPair(day);
+  const all=Array.isArray(day.courses)?day.courses:[];
+  const visible=showAll?all.slice(0,4):focus.courses;
+  const remaining=Math.max(0,all.length-visible.length);
   const cardWidth=Math.max(25,Math.floor((width-gap)/2));
   return <VStack alignment="center" spacing={compact?4:5}
       frame={{width,alignment:'top'}}>
@@ -110,14 +113,25 @@ function TodayPairColumn({day,width,compact=false,gap=5}){
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-        <CourseCard course={focus.courses[0]} compact={compact} width={cardWidth} density="pair"/>
+        <CourseCard course={visible[0]} compact={compact} width={cardWidth} density="pair"/>
       </VStack>
       <VStack alignment="center" spacing={4} frame={{width:cardWidth,alignment:'top'}}>
-        {focus.courses[1]?<CourseCard course={focus.courses[1]} compact={compact} width={cardWidth} density="pair"/>:null}
-        {focus.hiddenAfter>0?<Text font={compact?10:11}
+        {visible[1]?<CourseCard course={visible[1]} compact={compact} width={cardWidth} density="pair"/>:null}
+        {!showAll&&focus.hiddenAfter>0?<Text font={compact?10:11}
           foregroundStyle={COLORS.faint}>+{focus.hiddenAfter}节课</Text>:null}
       </VStack>
     </HStack>
+    {showAll&&visible.length>2?
+      <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
+        <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
+          <CourseCard course={visible[2]} compact={compact} width={cardWidth} density="pair"/>
+        </VStack>
+        <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
+          {visible[3]?<CourseCard course={visible[3]} compact={compact} width={cardWidth} density="pair"/>:null}
+        </VStack>
+      </HStack>:null}
+    {showAll&&remaining>0?<Text font={compact?10:11}
+      foregroundStyle={COLORS.faint}>+{remaining}节课</Text>:null}
   </VStack>;
 }
 
@@ -141,6 +155,7 @@ function RollingPanel({model,family}){
       const sideWidth=Math.floor(usableWidth/(expanded?4:3));
       const todayWidth=usableWidth-sideWidth*2;
       const maxRows=medium?1:height>=370?3:height>=290?2:1;
+      const showAllToday=!medium&&height>=290;
       return <VStack alignment="leading" spacing={0}
         padding={safeInset}
         widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
@@ -149,7 +164,8 @@ function RollingPanel({model,family}){
           frame={{maxWidth:'infinity',alignment:'leading'}}>
           {days.map(day=>day.today&&expanded
             ?<TodayPairColumn key="today-pair" day={day}
-              width={todayWidth} compact={medium} gap={gap}/>
+              width={todayWidth} compact={medium} gap={gap}
+              showAll={showAllToday}/>
             :<DayColumn key={String(day.index)}
               day={day.today?{...day,courses:todayFocus.courses}:day}
               width={day.today?todayWidth:sideWidth}
