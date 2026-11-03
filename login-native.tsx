@@ -141,6 +141,20 @@ type RefreshFormOutcome=
   | {kind:'credentials';values:NativeSchoolEndpoints;username:string;password:string}
   | {kind:'reuse';values:NativeSchoolEndpoints};
 
+function validSchoolOverride(raw:string,key:keyof NativeSchoolEndpoints):boolean{
+  const value=raw.trim();
+  if(!value)return true;
+  if(value.length>220||raw!==value)return false;
+  const template=key==='semester'||key==='courses';
+  if(value.split('{sid}').length!==(template?2:1))return false;
+  const checked=template?value.replace('{sid}','123'):value;
+  if(!/^https:\/\/(?:authserver\.nufe\.edu\.cn|jwxt\.nufe\.edu\.cn)\/[A-Za-z0-9_./-]+$/.test(checked)||
+      checked.slice(8).includes('//')||
+      checked.split('/').some(p=>p==='.'||p==='..'))return false;
+  if(key==='auth')return /^https:\/\/authserver\.nufe\.edu\.cn\/authserver(?:\/|$)/.test(checked);
+  return checked.startsWith('https://jwxt.nufe.edu.cn/student/');
+}
+
 function RefreshSetupView({defaults,allowReuse}:{
   defaults:NativeSchoolEndpoints;allowReuse:boolean;
 }){
@@ -155,7 +169,8 @@ function RefreshSetupView({defaults,allowReuse}:{
   const [password,setPassword]=useState('');
   const values={auth:auth.trim(),sso:sso.trim(),table:table.trim(),
     semester:semester.trim(),courses:courses.trim()};
-  const validEndpoints=Object.values(values).every(v=>v.length<=220);
+  const validEndpoints=(Object.keys(values) as Array<keyof NativeSchoolEndpoints>)
+    .every(key=>validSchoolOverride(values[key],key));
   const account=username.trim();
   const validAccount=account.length>0&&account.length<=100&&
     password.length>0&&password.length<=512;
@@ -166,7 +181,8 @@ function RefreshSetupView({defaults,allowReuse}:{
       <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
         <Section header={<Text>南京财经大学 · 默认接口</Text>}
-          footer={<Text>全部留空即可直接使用南京财经大学教务系统。仅接受学校可信 HTTPS 域名的接口路径。</Text>}>
+          footer={<Text>{validEndpoints?'全部留空即使用南京财经大学教务系统的默认地址。':
+            '接口地址格式不正确，请检查 HTTPS、学校域名和接口路径。'}</Text>}>
           <TextField title="统一认证根地址"
             prompt={'留空默认使用 '+defaults.auth}
             value={auth} onChanged={setAuth}
