@@ -2,8 +2,8 @@
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
- .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeEndpointForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeEndpointForm=(...args)=>globalThis.__nativeEndpointMock(...args);')
+ .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeRefreshForm } from './login-native';",
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeRefreshForm=(...args)=>globalThis.__nativeRefreshMock(...args);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
@@ -255,21 +255,60 @@ test('NUFE endpoint settings keep default URLs and validate academic paths',asyn
   a.throws(()=>m.validateEndpointSettings({...d,auth:d.sso}),code('ENDPOINT_CONFIG'));
 });
 
-test('endpoint edits persist locally and reset without touching account or calendar',async()=>{
+test('manual refresh blanks choose default NUFE endpoints and discard hidden overrides',async()=>{
   const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints',d=e.m.ENDPOINT_DEFAULTS;
-  const changed={...d,sso:'https://jwxt.nufe.edu.cn/student/sso/login-v2'};
-  e.sandbox.__nativeEndpointMock=async()=>({kind:'save',values:changed});
-  e.sandbox.__sdk.Dialog.confirm=async()=>true;
-  e.sandbox.__sdk.Dialog.alert=async()=>{};
-  await e.m.showEndpointSettings();
-  a.equal(JSON.parse(e.keys.get(key)).values.sso,changed.sso);
-  a.equal(e.m.loadEndpointSettings().sso,changed.sso);
-  a.ok(!e.keys.has('CourseSync.v1.icloud-credentials'));
-  a.equal(e.db.length,0);
-  e.sandbox.__nativeEndpointMock=async()=>({kind:'reset'});
-  await e.m.showEndpointSettings();
+  e.keys.set(key,JSON.stringify({version:1,values:{...d,
+    table:'https://jwxt.nufe.edu.cn/student/for-std/course-table-v2'}}));
+  const seen=[];
+  e.sandbox.__nativeRefreshMock=async(defaults,allowReuse)=>{
+    seen.push({defaults,allowReuse});
+    return {kind:'credentials',username:'local-user',password:'not-a-real-password',
+      values:{auth:'',sso:'',table:'',semester:'',courses:''}};
+  };
+  const auth=await e.m.prepareManualRefresh(e.state);
+  a.equal(auth.kind,'credentials');
+  a.equal(auth.username,'local-user');
+  a.equal(auth.password,'not-a-real-password');
+  a.equal(e.m.loadEndpointSettings().table,d.table);
   a.equal(e.keys.has(key),false);
-  a.equal(e.m.loadEndpointSettings().sso,d.sso);
+  a.equal(e.db.length,0);
+  a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
+  a.equal(seen.length,1);
+  a.equal(seen[0].defaults.auth,d.auth);
+  a.equal(seen[0].allowReuse,false);
+});
+test('manual custom HTTPS paths save locally and are used by background refresh',async()=>{
+  const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints',d=e.m.ENDPOINT_DEFAULTS;
+  const chosen='https://jwxt.nufe.edu.cn/student/for-std/course-table-v2';
+  e.keys.set('CourseSync.Local.v1.cookies','[]');
+  e.sandbox.__nativeRefreshMock=async()=>({
+    kind:'reuse',values:{auth:'',sso:'',table:chosen,semester:'',courses:''}
+  });
+  const result=await e.m.prepareManualRefresh(e.state);
+  a.equal(result.kind,'reuse');
+  a.equal(JSON.parse(e.keys.get(key)).values.table,chosen);
+  a.equal(e.m.loadEndpointSettings().table,chosen);
+  a.equal(e.db.length,0);
+  a.equal(e.keys.has('CourseSync.v1.icloud-credentials'),false);
+});
+test('manual refresh rejects unknown hosts without saving or sending credentials',async()=>{
+  const e=await env({hostEnv:'index'}),key='CourseSync.Local.v1.school-endpoints';
+  e.sandbox.__nativeRefreshMock=async()=>({
+    kind:'credentials',username:'local-user',password:'secret',
+    values:{auth:'',sso:'',table:'https://evil.test/student/login',semester:'',courses:''}
+  });
+  await a.rejects(()=>e.m.prepareManualRefresh(e.state),code('ENDPOINT_CONFIG'));
+  a.equal(e.keys.has(key),false);
+  a.equal(e.requests.length,0);
+});
+test('cancel in the manual refresh wizard does not change endpoints or credentials',async()=>{
+  const e=await env({hostEnv:'index'});
+  e.sandbox.__nativeRefreshMock=async()=>null;
+  const before=JSON.stringify([...e.keys]);
+  const result=await e.m.prepareManualRefresh(e.state);
+  a.equal(result,null);
+  a.equal(JSON.stringify([...e.keys]),before);
+  a.equal(e.requests.length,0);
 });
 
 test('relative redirects resolve only inside trusted hosts',async()=>{const {m}=await env();a.equal(m.resolveURL('https://jwxt.nufe.edu.cn/student/login','../sso/login'),'https://jwxt.nufe.edu.cn/sso/login');a.throws(()=>m.resolveURL('https://jwxt.nufe.edu.cn/','//evil.test/'),code('DOMAIN_BLOCKED'));});
@@ -573,21 +612,22 @@ test('owned series is replaced with a standalone new target after backup',async(
 test('orphan owned marker is removed only in successfully fetched term',async()=>{const e=await env();e.add(lesson());e.add(lesson({id:'orphan'}));e.add(lesson({id:'other-term',sid:'999'}));await e.m.applyTransaction(tx([lesson()],[lesson()]),new e.m.CalendarAdapter(e.calendar,e.state.owner,e.store));a.equal(e.db.length,2);a.ok(e.db.some(x=>e.m.eventRecord(x,e.state.owner).sid==='999'));});
 test('pending transaction does not resume before a fresh complete school fetch',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,{});await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.length,0);a.ok(e.store.read().tx);a.equal(e.store.read().lastError,'SCHEMA');});
 test('pending stale cancellation is rebased when fresh school data still includes class',async()=>{const e=await env();e.baseline([lesson()]);e.add(lesson());e.state.tx=tx([lesson()],[]);loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.db.length,1);a.equal(e.requests.filter(x=>x[0]==='remove').length,0);a.equal(e.store.read().tx,null);a.match(e.notices[0].title,/成功/);});
-test('main menu exposes interface settings alongside routine actions',async()=>{
+test('main menu keeps only refresh, status and available sign-out',async()=>{
  const e=await env({mode:'menu',hostEnv:'index'}),menus=[];
  e.sandbox.config.runsInApp=true;e.sandbox.args.shortcutParameter=null;
  e.keys.set('CourseSync.Local.v1.cookies','[]');
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions);return null;};
  e.store.write(e.state);e.store.release();await e.m.run();
- a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','教务接口','退出登录']);
- a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,false,true]);
+ a.deepEqual(Array.from(menus[0],x=>x.label),['立即刷新','运行状态','退出登录']);
+ a.deepEqual(Array.from(menus[0],x=>!!x.destructive),[false,false,true]);
  a.equal(e.requests.length,0);
 });
 test('shortcut sync suppresses menus even while Scriptable is foregrounded',async()=>{const e=await env();e.sandbox.config.runsInApp=true;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.notices.length,1);a.match(e.notices[0].title,/成功/);});
 test('upgrade disables old course reminders and retains result-only preference',async()=>{const e=await env();e.state.minutes=10;e.baseline([lesson()]);e.add(lesson());loggedIn(e,raw([activity({weekIndexes:[1]})]));await executeDaily(e);a.equal(e.store.read().minutes,0);a.equal(e.store.read().notificationMode,'result-only-v1.9');a.equal(e.notices.length,1);});
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
 test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
- const e=await env({hostEnv:'index'});e.state.calendarId=null;const alerts=[],all=[e.other];
+ const e=await env({hostEnv:'index'});
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',values:{auth:'',sso:'',table:'',semester:'',courses:''}});e.state.calendarId=null;const alerts=[],all=[e.other];
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'new-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
  e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
@@ -843,7 +883,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async options=>{
    menus.push(options.actions.map(x=>x.label));
-   return 3; // direct destructive logout
+   return 2; // direct destructive logout
  };
  e.sandbox.__sdk.Dialog.confirm=async options=>{
    a.match(options.message,/Cookie/);
@@ -852,7 +892,7 @@ test('logout is direct with no save-password submenu and no calendar mutation',a
  };
  e.sandbox.__sdk.Dialog.alert=async o=>alerts.push(o);
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
  a.equal(menus.length,1);
  a.equal(e.keys.has('CourseSync.Local.v1.cookies'),false);
  a.equal(e.m.hasSavedCredentials(),false);
@@ -867,7 +907,7 @@ test('after logout, existing calendar opens normal menu rather than first-setup 
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async o=>{menus.push(o.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态']);
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.equal(e.requests.length,0);
 });
@@ -894,7 +934,7 @@ test('a crash after persisting logout intent still offers credential cleanup ret
  e.store.write(e.state);e.store.release();
  e.sandbox.__sdk.Dialog.actionSheet=async opts=>{menus.push(opts.actions.map(x=>x.label));return null;};
  await e.m.run();
- a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','教务接口','退出登录']);
+ a.deepEqual(Array.from(menus[0]),['立即刷新','运行状态','退出登录']);
  a.equal(e.requests.length,0);
 });
 test('signed-out environment diagnostics never reuse an undeleted school cookie',async()=>{
