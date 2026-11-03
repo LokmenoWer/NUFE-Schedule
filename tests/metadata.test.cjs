@@ -35,20 +35,14 @@ test('README distinguishes public CourseSync name from legacy installation ident
 });
 
 test('README explicitly states verification is limited to the NUFE academic system',()=>{
-  assert.match(read('README.md'),/仅验证南京财经大学教务系统/);
+  assert.match(read('README.md'),/目前仅验证南京财经大学教务系统/);
   assert.match(read('README.md'),/教务接口/);
 });
 
-test('README screenshots resolve to existing nonempty images',()=>{
+test('README remains text-only without image markup or references',()=>{
   const readme=read('README.md');
-  const images=[...readme.matchAll(/<img\s+src="([^"]+)"/g)].map(m=>m[1]);
-  assert.ok(images.length>=5);
-  for(const relative of images){
-    assert.ok(relative.startsWith('docs/images/'),'image path is inside docs/images');
-    const full=path.join(root,relative);
-    assert.ok(fs.existsSync(full),'missing README image: '+relative);
-    assert.ok(fs.statSync(full).size>2000,'empty README image: '+relative);
-  }
+  assert.doesNotMatch(readme,/<img\\b|<picture\\b|<svg\\b|!\\[[^\\]]*\\]\\(|docs\\/images\\//i);
+  assert.match(readme,/目前仅验证南京财经大学教务系统/);
 });
 
 test('release and README describe the same stable installation path',()=>{
