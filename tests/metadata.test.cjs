@@ -9,13 +9,13 @@ const publicFiles=['script.json','docs/release-notes.md'];
 
 test('Scripting metadata keeps the intended display identity',()=>{
   const data=JSON.parse(read('script.json'));
-  assert.equal(data.name,'NUFE-Schedule');
+  assert.equal(data.name,'CourseSync');
   assert.equal(data.version,'0.0.0');
   assert.match(data.description,/CourseSync/);
   assert.equal(data.localizedNames.en,'CourseSync');
   assert.equal(data.localizedNames.zh,'CourseSync');
-  // Keep Scripting's script identity and remote archive stable for installed users.
-  assert.equal(data.name,'NUFE-Schedule');
+  // CourseSync is the actual Scripting script identity and stable archive name.
+  assert.equal(data.name,'CourseSync');
   assert.match(data.color,/^#[0-9a-fA-F]{6}$/);
   assert.equal(data.icon,'calendar');
 });
@@ -30,8 +30,8 @@ test('public-facing descriptions consistently use NUFE',()=>{
 test('README distinguishes public CourseSync name from legacy installation identity',()=>{
   const readme=read('README.md');
   assert.match(readme,/^# CourseSync$/m);
-  assert.match(readme,/底层脚本标识/);
-  assert.match(readme,/NUFE-Schedule/);
+  assert.match(readme,/Scripting 脚本标识/);
+  assert.match(readme,/CourseSync/);
 });
 
 test('README explicitly states verification is limited to the NUFE academic system',()=>{
@@ -52,7 +52,7 @@ test('README screenshots resolve to existing nonempty images',()=>{
 });
 
 test('release and README describe the same stable installation path',()=>{
-  const url='https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip';
+  const url='https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/CourseSync.zip';
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
   assert.match(read('docs/release-notes.md'),/NUFE-Schedule\.zip/);
@@ -71,7 +71,7 @@ test('error guidance does not direct users to removed menu actions',()=>{
 });
 
 test('only the Release archive is distributed',()=>{
-  assert.equal(fs.existsSync(path.join(root,'NUFE-Schedule.zip')),false,
+  assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
     'stale root ZIP should not be tracked or distributed');
   assert.match(read('.gitignore'),/^\/NUFE-Schedule\.zip$/m);
   const workflow=read('.github/workflows/release.yml');
