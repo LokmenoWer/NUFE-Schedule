@@ -189,6 +189,43 @@ test('widget mirroring fails safely if native Storage is absent or rejects write
 });
 test('single file loads all APIs without Scriptable or network',async()=>{const e=await env();a.equal(typeof e.m.run,'function');});
 test('school URL whitelist blocks credentials and other hosts',async()=>{const {m}=await env();for(const u of ['http://jwxt.nufe.edu.cn/','https://evil.test/','https://jwxt.nufe.edu.cn@evil.test/','https://jwxt.nufe.edu.cn:443/'])a.throws(()=>m.safeURL(u),code('DOMAIN_BLOCKED'));});
+test('NUFE endpoint settings keep default URLs and validate academic paths',async()=>{
+  const e=await env(),m=e.m,d=m.ENDPOINT_DEFAULTS;
+  a.equal(m.loadEndpointSettings().table,d.table);
+  a.deepEqual(Object.keys(d),['auth','sso','table','semester','courses']);
+  a.equal(m.termEndpoint(d.semester,161),'https://jwxt.nufe.edu.cn/student/ws/semester/get/161');
+  a.equal(m.termEndpoint(d.courses,161),'https://jwxt.nufe.edu.cn/student/for-std/course-table/semester/161/print-data');
+  a.throws(()=>m.termEndpoint(d.semester,'16/1'),code('ENDPOINT_CONFIG'));
+  const adjusted={...d,table:'https://jwxt.nufe.edu.cn/student/for-std/course-table-v2'};
+  a.equal(m.validateEndpointSettings(adjusted).table,adjusted.table);
+  for(const table of ['http://jwxt.nufe.edu.cn/student/x','https://evil.test/student/x',
+    'https://jwxt.nufe.edu.cn@evil.test/student/x','https://jwxt.nufe.edu.cn:443/student/x',
+    'https://jwxt.nufe.edu.cn/student/../staff','https://jwxt.nufe.edu.cn/student/x?token=1',
+    'https://jwxt.nufe.edu.cn/student/%2f','https://jwxt.nufe.edu.cn/student//double']){
+    a.throws(()=>m.validateEndpointSettings({...d,table}),/ENDPOINT_CONFIG|DOMAIN_BLOCKED/);
+  }
+  a.throws(()=>m.validateEndpointSettings({...d,semester:d.semester.replace('{sid}','999')}),code('ENDPOINT_CONFIG'));
+  a.throws(()=>m.validateEndpointSettings({...d,courses:d.courses+'/{sid}'}),code('ENDPOINT_CONFIG'));
+  a.throws(()=>m.validateEndpointSettings({...d,auth:d.sso}),code('ENDPOINT_CONFIG'));
+});
+
+test('endpoint edits persist locally and reset without touching account or calendar',async()=>{
+  const e=await env({hostEnv:'index'}),key='NUFE.Local.v1.school-endpoints',d=e.m.ENDPOINT_DEFAULTS;
+  const changed={...d,sso:'https://jwxt.nufe.edu.cn/student/sso/login-v2'};
+  e.sandbox.__nativeEndpointMock=async()=>({kind:'save',values:changed});
+  e.sandbox.__sdk.Dialog.confirm=async()=>true;
+  e.sandbox.__sdk.Dialog.alert=async()=>{};
+  await e.m.showEndpointSettings();
+  a.equal(JSON.parse(e.keys.get(key)).values.sso,changed.sso);
+  a.equal(e.m.loadEndpointSettings().sso,changed.sso);
+  a.ok(!e.keys.has('NUFE.Schedule.v1.icloud-credentials'));
+  a.equal(e.db.length,0);
+  e.sandbox.__nativeEndpointMock=async()=>({kind:'reset'});
+  await e.m.showEndpointSettings();
+  a.equal(e.keys.has(key),false);
+  a.equal(e.m.loadEndpointSettings().sso,d.sso);
+});
+
 test('relative redirects resolve only inside trusted hosts',async()=>{const {m}=await env();a.equal(m.resolveURL('https://jwxt.nufe.edu.cn/student/login','../sso/login'),'https://jwxt.nufe.edu.cn/sso/login');a.throws(()=>m.resolveURL('https://jwxt.nufe.edu.cn/','//evil.test/'),code('DOMAIN_BLOCKED'));});
 test('redacted request labels exclude all query credentials',async()=>{const {m}=await env();a.doesNotMatch(m.requestLabel('https://authserver.nufe.edu.cn/authserver/login?password=SECRET&username=STUDENT'),/SECRET|STUDENT|password|username/);});
 test('nested semester id does not override top-level semester',async()=>{const {m}=await env();a.equal(m.topId('var currentSemester={calendarAssoc:{id:1},"id":161}','currentSemester'),161);});
