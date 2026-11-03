@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Modified 2026-11-02: keep routine UI minimal and expose targeted recovery only for relevant failures; offer to create a missing 课表 calendar.
 import * as Scripting from "scripting";
-import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';
+import { presentNativeCredentialForm, presentNativeTextForm, presentNativeEndpointForm } from './login-native';
 import { createNativeProgressView } from './progress-native';
 // Scripting 3.2.1-compatible entry: no top-level await; keep this file as index.tsx.
 let __NUFE_BOOT_PHASE='初始化运行接口';
@@ -147,10 +147,20 @@ const QuickLook={present:image=>hostAPI('QuickLook').previewImage(image)};
 'use strict';
 // This deployment is explicitly authorized for a disposable, dedicated timetable calendar.
 const REPLACE_DEDICATED_LEGACY = true;
-const AUTH = 'https://authserver.nufe.edu.cn/authserver';
-const JW = 'https://jwxt.nufe.edu.cn';
-const TABLE = JW + '/student/for-std/course-table';
-const SSO = JW + '/student/sso/login';
+const ENDPOINT_KEY='NUFE.Local.v1.school-endpoints';
+const JW='https://jwxt.nufe.edu.cn';
+const ENDPOINT_DEFAULTS=Object.freeze({
+  auth:'https://authserver.nufe.edu.cn/authserver',
+  sso:JW+'/student/sso/login',
+  table:JW+'/student/for-std/course-table',
+  semester:JW+'/student/ws/semester/get/{sid}',
+  courses:JW+'/student/for-std/course-table/semester/{sid}/print-data'
+});
+let AUTH=ENDPOINT_DEFAULTS.auth;
+let SSO=ENDPOINT_DEFAULTS.sso;
+let TABLE=ENDPOINT_DEFAULTS.table;
+let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
+let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
 const KEY = 'NUFE.Local.v1.cookies';
 // Scripting Keychain is device/app-level credential storage; never store this key in JSON state.
 const CRED_KEY = 'NUFE.Local.v1.saved-login'; // Legacy device-only credential key.
@@ -257,6 +267,77 @@ function resolveURL(base, loc) {
   for(const p of path.split('/')) { if(p==='..') parts.pop(); else if(p!=='.') parts.push(p); }
   const out='https://'+host+parts.join('/'); safeURL(out); return out;
 }
+// Local editable paths only: credentials never go to an untrusted host.
+function validateEndpointSettings(value) {
+  assert(value&&typeof value==='object'&&!Array.isArray(value),'ENDPOINT_CONFIG');
+  const result={};
+  for(const key of Object.keys(ENDPOINT_DEFAULTS)){
+    const raw=value[key];
+    assert(typeof raw==='string'&&raw===raw.trim()&&raw.length<=220,'ENDPOINT_CONFIG');
+    const template=key==='semester'||key==='courses';
+    assert(raw.split('{sid}').length===(template?2:1),'ENDPOINT_CONFIG');
+    const checked=template?raw.replace('{sid}','123'):raw;
+    assert(/^https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_./-]+$/.test(checked)&&
+      !checked.slice(8).includes('//')&&
+      !checked.split('/').some(p=>p==='.'||p==='..'),'ENDPOINT_CONFIG');
+    const parsed=safeURL(checked);
+    if(key==='auth')assert(parsed.host==='authserver.nufe.edu.cn'&&
+      /^\/authserver(?:\/|$)/.test(parsed.path),'ENDPOINT_CONFIG');
+    else assert(parsed.host==='jwxt.nufe.edu.cn'&&
+      /^\/student\//.test(parsed.path),'ENDPOINT_CONFIG');
+    result[key]=raw;
+  }
+  return result;
+}
+function loadEndpointSettings(){
+  try{
+    if(!Keychain.contains(ENDPOINT_KEY))return {...ENDPOINT_DEFAULTS};
+    const saved=JSON.parse(Keychain.get(ENDPOINT_KEY));
+    if(!saved||saved.version!==1)return {...ENDPOINT_DEFAULTS};
+    return validateEndpointSettings(saved.values);
+  }catch(_){return {...ENDPOINT_DEFAULTS};}
+}
+function activateEndpointSettings(value){
+  const valid=validateEndpointSettings(value);
+  AUTH=valid.auth;SSO=valid.sso;TABLE=valid.table;
+  SEMESTER_ENDPOINT=valid.semester;COURSE_DATA_ENDPOINT=valid.courses;
+}
+function termEndpoint(template,sid){
+  const id=String(sid);
+  assert(/^\d{1,12}$/.test(id),'ENDPOINT_CONFIG');
+  const url=template.replace('{sid}',id);
+  safeURL(url);return url;
+}
+async function showEndpointSettings(){
+  if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
+  let response;
+  try{response=await presentNativeEndpointForm(loadEndpointSettings());}
+  catch(_){fail('ENDPOINT_UI');}
+  if(!response)return;
+  if(response.kind==='reset'){
+    if(!await confirm('恢复默认接口','将恢复南京财经大学教务系统的五个默认地址，不清除课程、日历或账号密码。'))return;
+    try{
+      if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
+      if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
+    }catch(_){fail('ENDPOINT_STORAGE');}
+    activateEndpointSettings(ENDPOINT_DEFAULTS);
+    await notice('接口设置','已恢复默认接口。下次刷新生效。');
+    return;
+  }
+  assert(response.kind==='save','ENDPOINT_CONFIG');
+  const values=validateEndpointSettings(response.values);
+  const old=loadEndpointSettings();
+  if(Object.keys(values).every(k=>values[k]===old[k]))return;
+  if(!await confirm('保存教务接口','仅接受南京财经大学两个已验证域名内的 HTTPS 地址。错误的接口路径可能导致刷新失败；现有课程和日历不会被删除。'))return;
+  try{
+    const raw=JSON.stringify({version:1,values});
+    if(Keychain.set(ENDPOINT_KEY,raw)!==true||
+      Keychain.get(ENDPOINT_KEY)!==raw)fail('ENDPOINT_STORAGE');
+  }catch(_){fail('ENDPOINT_STORAGE');}
+  activateEndpointSettings(values);
+  await notice('接口设置','接口已保存，下次刷新生效。');
+}
+
 function topId(html, name) {
   const m = new RegExp('\\b'+name+'\\s*=\\s*\\{').exec(html); if(!m) return null;
   let depth=0, quote=null;
@@ -1753,7 +1834,7 @@ async function chooseAnchor(sid,name,http,state,store,interactive) {
   // Never invent a date when the school returns no usable dates.
   let suggestion=null, lookupError=null;
   try{
-    const detail=await http.json(JW+'/student/ws/semester/get/'+sid);
+    const detail=await http.json(termEndpoint(SEMESTER_ENDPOINT,sid));
     anchor=explicitTeachingMonday(detail);
     if(anchor){
       state.anchors[sid]=anchor;
@@ -1963,7 +2044,7 @@ async function synchronize(state,store,calendar,interactive,allTerms=false,progr
     budget();stage('读取学期 '+sid);const name=(info.semesters.find(s=>s.id===sid)||{}).name||String(sid);
     const anchor=await chooseAnchor(sid,name,http,state,store,interactive);
     stage('请求学期 '+sid+' 课表数据');
-    const raw=await http.json(TABLE+'/semester/'+sid+'/print-data?'+form({semesterId:sid,hasExperiment:'true'}));
+    const raw=await http.json(termEndpoint(COURSE_DATA_ENDPOINT,sid)+'?'+form({semesterId:sid,hasExperiment:'true'}));
     const normalized=expand(raw,sid,anchor);
     if(normalized.studentCode){const studentKey='NUFE.Local.v1.student';if(Keychain.contains(studentKey))assert(Keychain.get(studentKey)===normalized.studentCode,'ACCOUNT_CHANGED');else Keychain.set(studentKey,normalized.studentCode);}
     let old=state.semesters[sid];
@@ -2109,6 +2190,7 @@ function canOfferSignOut(state){
 async function run() {
   __NUFE_BOOT_PHASE='初始化本地存储';
   const store=new Store();
+  activateEndpointSettings(loadEndpointSettings());
   let firstSetup=false;
   // A configured calendar stays configured even after explicitly logging out.
   if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
@@ -2124,6 +2206,7 @@ async function run() {
       const menu=new Alert();menu.title='NUFE 课表';
       menu.message=state.lastError==='LOGOUT_INCOMPLETE'?'退出登录未完成，点击「退出登录」重试；已同步课表保留。':state.signedOut?'已退出登录。点击「立即刷新」重新登录；已同步课表保留。':state.lastCheck?'上次刷新：'+localDateTime(state.lastCheck):'首次使用请刷新并绑定专用课表日历。';
       menu.addAction('立即刷新');menu.addAction('运行状态');
+      menu.addAction('教务接口');
       if(canOfferSignOut(state))menu.addDestructiveAction('退出登录');
       menu.addCancelAction('关闭');
       const selected=await menu.presentSheet();if(selected<0)return;
@@ -2133,7 +2216,8 @@ async function run() {
         if(recovery==='cookie')action=5;
         else {await applyRecovery(recovery,state,store);return;}
       }
-      if(selected===2)action=13;
+      if(selected===2){await showEndpointSettings();return;}
+      if(selected===3)action=13;
     }
     const slot=await acquireSyncSlot(store,interactive);
     if(slot!=='acquired'){
@@ -2220,7 +2304,7 @@ async function run() {
   }finally{if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,passwordLogin,coursePage,mfa,signOut,run};
+if(globalThis.__NUFE_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,showEndpointSettings,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*
