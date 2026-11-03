@@ -331,8 +331,8 @@ async function showEndpointSettings(){
   if(!await confirm('保存教务接口','仅接受南京财经大学两个已验证域名内的 HTTPS 地址。错误的接口路径可能导致刷新失败；现有课程和日历不会被删除。'))return;
   try{
     const raw=JSON.stringify({version:1,values});
-    if(Keychain.set(ENDPOINT_KEY,raw)!==true||
-      Keychain.get(ENDPOINT_KEY)!==raw)fail('ENDPOINT_STORAGE');
+    Keychain.set(ENDPOINT_KEY,raw);
+    if(Keychain.get(ENDPOINT_KEY)!==raw)fail('ENDPOINT_STORAGE');
   }catch(_){fail('ENDPOINT_STORAGE');}
   activateEndpointSettings(values);
   await notice('接口设置','接口已保存，下次刷新生效。');
