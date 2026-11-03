@@ -522,7 +522,10 @@ test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   a.equal(wrap('证券投资学'),'证券投\n资学');
   a.equal(wrap('Financial Markets'),'Financial Markets');
   a.ok(ui.includes('isSide?formatSideTitle(course.title):course.title'));
-  a.ok(ui.includes("course.startLabel+'\\n'+course.endLabel"));
+  a.ok(ui.includes("course.startLabel+'–'+course.endLabel"));
+  a.ok(ui.includes('lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}'));
+  a.ok(!ui.includes("course.startLabel+'\\n'+course.endLabel"),
+    'side card time range should not be forced into two lines');
   a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
   a.ok(ui.includes('course.teacher&&!isSide'));
 });
