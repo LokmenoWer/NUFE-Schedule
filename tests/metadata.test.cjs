@@ -52,10 +52,10 @@ test('README screenshots resolve to existing nonempty images',()=>{
 });
 
 test('release and README describe the same stable installation path',()=>{
-  const url='https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/CourseSync.zip';
+  const url='https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip';
   assert.ok(read('README.md').includes(url));
   assert.ok(read('docs/engineering.md').includes(url));
-  assert.match(read('docs/release-notes.md'),/NUFE-Schedule\.zip/);
+  assert.match(read('docs/release-notes.md'),/CourseSync\.zip/);
   assert.match(read('scripts/package.sh'),/index\.tsx intent\.tsx widget\.tsx widget-data\.ts login-native\.tsx progress-native\.tsx script\.json/);
 });
 
@@ -73,7 +73,7 @@ test('error guidance does not direct users to removed menu actions',()=>{
 test('only the Release archive is distributed',()=>{
   assert.equal(fs.existsSync(path.join(root,'CourseSync.zip')),false,
     'stale root ZIP should not be tracked or distributed');
-  assert.match(read('.gitignore'),/^\/NUFE-Schedule\.zip$/m);
+  assert.match(read('.gitignore'),/^\/CourseSync\.zip$/m);
   const workflow=read('.github/workflows/release.yml');
   assert.match(workflow,/gh release upload "\$release_tag" "\$archive" --clobber/);
   assert.match(workflow,/git\/refs\/tags\/\$release_tag/);
