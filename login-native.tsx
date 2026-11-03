@@ -125,3 +125,76 @@ export async function presentNativeTextForm(options:NativeInputOptions) {
     options.kind==='sms'||options.kind==='totp'?48:120;
   return code&&code.length<=max?code:null;
 }
+
+
+// Advanced, native-only editing of the five school interface paths.
+// This view neither sends requests nor reads accounts or cookies.
+export type NativeSchoolEndpoints = {
+  auth: string;
+  sso: string;
+  table: string;
+  semester: string;
+  courses: string;
+};
+type EndpointFormOutcome =
+  | {kind:'save',values:NativeSchoolEndpoints}
+  | {kind:'reset'};
+
+function SchoolEndpointView({initial}:{initial:NativeSchoolEndpoints}) {
+  const dismiss=Navigation.useDismiss();
+  const [auth,setAuth]=useState(initial.auth);
+  const [sso,setSso]=useState(initial.sso);
+  const [table,setTable]=useState(initial.table);
+  const [semester,setSemester]=useState(initial.semester);
+  const [courses,setCourses]=useState(initial.courses);
+  const fields=[auth,sso,table,semester,courses];
+  const valid=fields.every(v=>v.trim().length>0&&v.trim().length<=220);
+
+  return <NavigationStack>
+    <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
+      toolbar={{cancellationAction:
+        <Button title="取消" action={()=>dismiss(null)}/>}}>
+      <Section header={<Text>南京财经大学 · 连接地址</Text>}
+        footer={<Text>仅允许修改已验证学校域名内的 HTTPS 接口路径。修改后在下一次刷新时生效；此页面不会发起网络请求。</Text>}>
+        <TextField title="统一认证根地址" value={auth} onChanged={setAuth}
+          prompt="https://authserver.nufe.edu.cn/authserver"
+          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        <TextField title="SSO 登录入口" value={sso} onChanged={setSso}
+          prompt="https://jwxt.nufe.edu.cn/student/sso/login"
+          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        <TextField title="课表页面" value={table} onChanged={setTable}
+          prompt="https://jwxt.nufe.edu.cn/student/for-std/course-table"
+          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+      </Section>
+      <Section header={<Text>课程数据接口</Text>}
+        footer={<Text>接口模板中的 {/**/}{'{sid}'} 代表学期 ID，必须保留，不需要填写具体数字。</Text>}>
+        <TextField title="学期详情" value={semester} onChanged={setSemester}
+          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+        <TextField title="课表数据" value={courses} onChanged={setCourses}
+          textInputAutocapitalization="never" autocorrectionDisabled={true}/>
+      </Section>
+      <Section>
+        <Button title="保存接口" disabled={!valid}
+          action={()=>{if(valid)dismiss({kind:'save',values:{
+            auth:auth.trim(),sso:sso.trim(),table:table.trim(),
+            semester:semester.trim(),courses:courses.trim()
+          }});}}/>
+        <Button title="恢复默认接口" action={()=>dismiss({kind:'reset'})}/>
+      </Section>
+    </List>
+  </NavigationStack>;
+}
+
+export async function presentNativeEndpointForm(initial:NativeSchoolEndpoints):
+  Promise<EndpointFormOutcome|null> {
+  const result=await Navigation.present({
+    element:<SchoolEndpointView initial={initial}/>,
+    modalPresentationStyle:'pageSheet'
+  });
+  if(result?.kind==='reset')return {kind:'reset'};
+  if(result?.kind!=='save'||!result.values)return null;
+  const values=result.values;
+  if(!['auth','sso','table','semester','courses'].every(
+      key=>typeof values[key]==='string'&&values[key].length<=220))return null;
+  return {kind:'save',values};
+}
