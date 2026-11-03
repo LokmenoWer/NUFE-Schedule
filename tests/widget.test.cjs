@@ -515,17 +515,19 @@ test('README documents the actual three-day UI and retains installation screensh
 test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/course.status==='current'\?'#F0F7FF':/); });
 test('narrow yesterday and tomorrow cards preserve full course names',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
-  const fn=ui.match(/function formatSideTitle\\(title\\)\\{[\\s\\S]*?\\n\\}/);
-  a.ok(fn,'side title formatter should exist');
-  const wrap=vm.runInNewContext(fn[0]+'\\nformatSideTitle',{Array,String,Math});
-  a.equal(wrap('微观经济学'),'微观经\\n济学');
-  a.equal(wrap('管理学原理'),'管理学\\n原理');
-  a.equal(wrap('证券投资学'),'证券投\\n资学');
+  const start=ui.indexOf('function formatSideTitle(title){');
+  const end=ui.indexOf('\n}\n',start);
+  a.ok(start>=0&&end>start,'side title formatter should exist');
+  const wrap=vm.runInNewContext(ui.slice(start,end+2)+'\nformatSideTitle',
+    {Array,String,Math});
+  a.equal(wrap('微观经济学'),'微观经\n济学');
+  a.equal(wrap('管理学原理'),'管理学\n原理');
+  a.equal(wrap('证券投资学'),'证券投\n资学');
   a.equal(wrap('Financial Markets'),'Financial Markets');
-  a.match(ui,/isSide\\?formatSideTitle\\(course\\.title\\):course\\.title/);
+  a.ok(ui.includes('isSide?formatSideTitle(course.title):course.title'));
   a.ok(ui.includes("course.startLabel+'\\n'+course.endLabel"));
   a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
-  a.match(ui,/course\\.teacher&&!isSide/);
+  a.ok(ui.includes('course.teacher&&!isSide'));
 });
 
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
