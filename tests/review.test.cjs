@@ -631,7 +631,7 @@ test('upgrade disables old course reminders and retains result-only preference',
 test('Scripting foreground defaults to management menu',async()=>{const e=await env({hostEnv:'index'});a.equal(e.m.ScriptingAdapter.__mode,'menu');});
 test('Scripting first provisioning creates a named iCloud calendar and syncs without a main menu',async()=>{
  const e=await env({hostEnv:'index'});
- e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',values:{auth:'',sso:'',table:'',semester:'',courses:''}});e.state.calendarId=null;const alerts=[],all=[e.other];
+ e.sandbox.__nativeRefreshMock=async()=>({kind:'reuse',schoolId:'nufe'});e.state.calendarId=null;const alerts=[],all=[e.other];
  e.sandbox.__sdk.Calendar.forEvents=async()=>all;
  e.sandbox.__sdk.Calendar.create=async opts=>({identifier:'new-icloud',title:opts.title,source:{type:'calDAV',title:'iCloud'},allowsContentModifications:true,isSubscribed:false,save:async function(){all.push(this);}});
  e.sandbox.__sdk.Dialog.prompt=async()=> 'Custom Calendar';
@@ -979,7 +979,7 @@ test('source omits obsolete school name and supports existing calendar aliases',
  const oldName=String.fromCharCode(0x5357,0x8d22);
  const fullName=String.fromCharCode(0x5357,0x4eac,0x8d22,0x7ecf,0x5927,0x5b66);
  a.equal(source.includes(oldName),false);
- a.equal(source.includes(fullName),false); // School-specific compatibility belongs in README, not application UI.
+ a.equal(source.includes(fullName),true); // The whitelisted school name is intentionally included.
  a.ok(source.includes('LEGACY_CALENDAR_TITLE'));
 });
 
