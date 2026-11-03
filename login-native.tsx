@@ -23,7 +23,7 @@ function LoginView({ title }: { title: string }) {
         cancellationAction: <Button title="取消" action={() => dismiss(null)} />
       }}
     >
-      <Section header={<Text>南京财经大学 · 统一身份认证</Text>}>
+      <Section header={<Text>账号登录</Text>}>
         <TextField
           title="学号"
           prompt="请输入学号"
@@ -180,8 +180,8 @@ function RefreshSetupView({defaults,allowReuse}:{
     {step==='endpoints'?
       <List navigationTitle="教务接口" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="取消" action={back}/>}}>
-        <Section header={<Text>南京财经大学 · 默认接口</Text>}
-          footer={<Text>{validEndpoints?'全部留空即使用南京财经大学教务系统的默认地址。':
+        <Section header={<Text>默认接口</Text>}
+          footer={<Text>{validEndpoints?'全部留空即使用内置的默认接口地址。':
             '接口地址格式不正确，请检查 HTTPS、学校域名和接口路径。'}</Text>}>
           <TextField title="统一认证根地址"
             prompt={'留空默认使用 '+defaults.auth}
@@ -214,7 +214,7 @@ function RefreshSetupView({defaults,allowReuse}:{
       </List>:
       <List navigationTitle="账号密码" navigationBarTitleDisplayMode="inline"
         toolbar={{cancellationAction:<Button title="上一步" action={back}/>}}>
-        <Section header={<Text>南京财经大学 · 统一身份认证</Text>}>
+        <Section header={<Text>账号登录</Text>}>
           <TextField title="学号" prompt="请输入学号" value={username}
             onChanged={setUsername} textContentType="username"
             textInputAutocapitalization="never"/>
