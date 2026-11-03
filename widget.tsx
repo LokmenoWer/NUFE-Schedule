@@ -2,7 +2,7 @@
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
-import { loadBestWidgetState, buildWidgetModel, buildSamplePreview, selectVisibleCourses, selectTodayPair, widgetReloadDate } from './widget-data';
+import { loadBestWidgetState, buildWidgetModel, buildSamplePreview, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
 
 const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
@@ -94,13 +94,10 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
   </VStack>;
 }
 
-// Two columns for today's lessons. On large widgets, use a second row
-// to show the third and fourth lessons rather than wasting vertical space.
+// The left side holds exactly the current (or next) class. The right side
+// stacks later upcoming classes; completed lessons are intentionally omitted.
 function TodayPairColumn({day,width,compact=false,gap=5,showAll=false}){
-  const focus=selectTodayPair(day);
-  const all=Array.isArray(day.courses)?day.courses:[];
-  const visible=showAll?all.slice(0,4):focus.courses;
-  const remaining=Math.max(0,all.length-visible.length);
+  const columns=selectTodayColumns(day,showAll?3:1);
   const cardWidth=Math.max(25,Math.floor((width-gap)/2));
   return <VStack alignment="center" spacing={compact?4:5}
       frame={{width,alignment:'top'}}>
@@ -113,25 +110,18 @@ function TodayPairColumn({day,width,compact=false,gap=5,showAll=false}){
     </VStack>
     <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
       <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-        <CourseCard course={visible[0]} compact={compact} width={cardWidth} density="pair"/>
+        {columns.focus?<CourseCard course={columns.focus} compact={compact}
+          width={cardWidth} density="pair"/>:null}
       </VStack>
-      <VStack alignment="center" spacing={4} frame={{width:cardWidth,alignment:'top'}}>
-        {visible[1]?<CourseCard course={visible[1]} compact={compact} width={cardWidth} density="pair"/>:null}
-        {!showAll&&focus.hiddenAfter>0?<Text font={compact?10:11}
-          foregroundStyle={COLORS.faint}>+{focus.hiddenAfter}节课</Text>:null}
+      <VStack alignment="center" spacing={compact?4:6}
+          frame={{width:cardWidth,alignment:'top'}}>
+        {columns.future.map(c=>
+          <CourseCard key={c.id} course={c} compact={compact}
+            width={cardWidth} density="pair"/>)}
+        {columns.hiddenAfter>0?<Text font={compact?10:11}
+          foregroundStyle={COLORS.faint}>+{columns.hiddenAfter}节课</Text>:null}
       </VStack>
     </HStack>
-    {showAll&&visible.length>2?
-      <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
-        <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-          <CourseCard course={visible[2]} compact={compact} width={cardWidth} density="pair"/>
-        </VStack>
-        <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-          {visible[3]?<CourseCard course={visible[3]} compact={compact} width={cardWidth} density="pair"/>:null}
-        </VStack>
-      </HStack>:null}
-    {showAll&&remaining>0?<Text font={compact?10:11}
-      foregroundStyle={COLORS.faint}>+{remaining}节课</Text>:null}
   </VStack>;
 }
 
