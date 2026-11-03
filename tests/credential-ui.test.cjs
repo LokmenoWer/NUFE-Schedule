@@ -29,6 +29,17 @@ test('native iOS credential sheet has both autofill fields and no WebView',()=>{
  assert.doesNotMatch(native,/WebView|loadURL|fetch\(|Clipboard|console\.log/);
 });
 
+test('five endpoint inputs use one native iOS sheet without embedded network code',()=>{
+ assert.match(native,/export async function presentNativeEndpointForm/);
+ assert.match(native,/function SchoolEndpointView/);
+ assert.match(native,/title="统一认证根地址"/);
+ assert.match(native,/title="课表数据"/);
+ assert.match(native,/title="恢复默认接口"/);
+ assert.match(index,/validateEndpointSettings/);
+ assert.match(index,/loadEndpointSettings/);
+ assert.ok(index.includes('presentNativeEndpointForm(loadEndpointSettings())'));
+});
+
 test('native OTP and CAPTCHA keep secrets in memory and use system keyboards',()=>{
  assert.match(native,/export async function presentNativeTextForm/);
  assert.match(native,/kind==='sms'\|\|kind==='totp'/);
