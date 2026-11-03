@@ -143,8 +143,9 @@ test('widget mirror publishes only non-sensitive verified course fields',async()
  a.equal(e.m.publishWidgetCache(e.state,now),true);
  const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
  a.equal(saved.version,1);a.equal(saved.events.length,1);
- a.deepEqual(Object.keys(saved.events[0]).sort(),['end','id','location','start','teacher','title']);
+ a.deepEqual(Object.keys(saved.events[0]).sort(),['end','eu','id','location','start','su','teacher','title','week']);
  a.equal(saved.events[0].teacher,'张老师');
+ a.deepEqual(saved.terms,[['2026-11-03','2026-11-03']]);
  a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
 });
 test('widget cache contains only current-window real lessons, never historical preview',async()=>{
@@ -164,7 +165,7 @@ test('widget cache contains only current-window real lessons, never historical p
   const saved=e.widgetRecords.get('CourseSync.Widget.Courses.v1');
   a.equal(saved.events.length,1);
   a.equal(saved.events[0].id,'real');
-  a.deepEqual(Object.keys(saved).sort(),['events','lastCheck','version']);
+  a.deepEqual(Object.keys(saved).sort(),['events','lastCheck','terms','version']);
   a.equal(JSON.stringify(e.state),previous);
   a.doesNotMatch(JSON.stringify(saved),/old1|old2|password|cookie|calendarId/);
 });

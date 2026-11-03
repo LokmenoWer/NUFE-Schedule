@@ -1,229 +1,286 @@
 // @ts-nocheck
-// CourseSync Home Screen widget. This entry is independent of index.tsx:
-// renders only the already synchronized local timetable snapshot.
-import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
-import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
+// CourseSync Home Screen widget, modeled on the nufe-kebiao Scriptable widget.
+// This entry is independent of index.tsx and renders only the already
+// synchronized local timetable snapshot. Parameter: today (default) or week.
+import { FileManager, Widget, Text, DateLabel, VStack, HStack, ZStack, Spacer, RoundedRectangle, GeometryReader, Script } from 'scripting';
+import { loadBestWidgetState, buildWidgetModel, widgetReloadDate, normalizeFamily, parseMode, buildPlan, weekToShow, weekColumns, weekGrid, headerNote, daySubtitle, weekSubtitle, weekdayName, chipPlan, chipOptions, chipName, fitRoom, textWidth, lessonMs, mixHex, LABEL_H } from './widget-data';
 
+const BG={light:'#f6f7fb',dark:'#16181d'};
 const COLORS={
-  // Opaque white canvas in all appearance modes; only course statuses tint.
-  dark:'#203451', blue:'#2C69D1', muted:'#9BA3AF',
-  faint:'#727E91', finished:'#929AA7',
-  doneBg:'#E5E7EB', nextBg:'#EBF4FF',
-  activeBg:'#238BFF'
+  text:{light:'#1a1d24',dark:'#eef0f5'},
+  sub:{light:'#5b6372',dark:'#a3aab8'},
+  faint:{light:'#8a91a0',dark:'#6f7685'},
+  accent:'#4b63e0',live:'#e03131',warn:'#e8590c'
 };
+const PADDING={top:14,leading:14,bottom:12,trailing:14};
+const DEFAULT_TINT='#4b63e0';
 
-// Narrow neighbor columns need explicit CJK line breaks. SwiftUI otherwise
-// gives the long detail stack priority and truncates the title to one line.
-function formatSideTitle(title){
-  const value=String(title||'');
-  const chars=Array.from(value);
-  if(chars.length<=4||!/[㐀-鿿]/.test(value))return value;
-  const lines=Math.ceil(chars.length/4);
-  const chunks=[];
-  for(let i=0;i<lines;i++){
-    const count=Math.ceil((chars.length)/ (lines-i));
-    chunks.push(chars.splice(0,count).join(''));
+function tintText(hex){return {light:hex,dark:mixHex(hex,'#ffffff',0.4)};}
+function tintFill(hex,amount){
+  return {light:mixHex(hex,BG.light,1-amount),dark:mixHex(hex,BG.dark,1-amount)};
+}
+function fixed(width,height,alignment='topLeading'){return {width,height,alignment};}
+
+function Bar({color,height}){
+  return <RoundedRectangle cornerRadius={1.5} fill={color} frame={{width:3,height}}/>;
+}
+
+// Live: time until the bell, ticking by itself. Next: relative time until class.
+function Countdown({lesson,size,color,width}){
+  const live=lesson.state==='live';
+  return <DateLabel date={new Date(lessonMs(lesson.date,live?lesson.end:lesson.start))}
+    style={live?'timer':'relative'} font={size} foregroundStyle={color} lineLimit={1}
+    minScaleFactor={0.7} multilineTextAlignment="trailing"
+    frame={{width,alignment:'trailing'}}/>;
+}
+
+function Header({title,subtitle,note,family}){
+  return <HStack alignment="center" spacing={0}>
+    <Text font={family==='small'?13:14} fontWeight="bold" foregroundStyle={COLORS.text} lineLimit={1}>{title}</Text>
+    {subtitle?<Text font={11} foregroundStyle={COLORS.sub} lineLimit={1} minScaleFactor={0.8}>{'  '+subtitle}</Text>:null}
+    <Spacer minLength={0}/>
+    {note?<Text font={10} fontWeight="medium" lineLimit={1} minScaleFactor={0.8}
+      foregroundStyle={note.tone==='warn'?COLORS.warn:COLORS.faint}>{note.text}</Text>:null}
+  </HStack>;
+}
+
+function LessonRow({lesson,compact=false,showTeacher=false}){
+  const meta=[lesson.start+'–'+lesson.end,lesson.room,showTeacher?lesson.teachers:''].filter(Boolean).join(' · ');
+  const active=lesson.state==='live'||lesson.state==='next';
+  return <HStack alignment="center" spacing={7}>
+    <Bar color={lesson.color||DEFAULT_TINT} height={compact?26:32}/>
+    <VStack alignment="leading" spacing={0}>
+      <Text font={compact?12:13} fontWeight="semibold" foregroundStyle={COLORS.text}
+        lineLimit={1} minScaleFactor={0.8}>{lesson.name}</Text>
+      <Text font={compact?10:11} foregroundStyle={COLORS.sub} lineLimit={1} minScaleFactor={0.8}>{meta}</Text>
+    </VStack>
+    <Spacer minLength={0}/>
+    {active?<VStack alignment="trailing" spacing={0} frame={{width:58,alignment:'trailing'}}>
+      <Text font={10} fontWeight="semibold" lineLimit={1}
+        foregroundStyle={lesson.state==='live'?COLORS.live:COLORS.accent}>
+        {lesson.state==='live'?'上课中':'下一节'}
+      </Text>
+      <Countdown lesson={lesson} size={10} color={COLORS.sub} width={58}/>
+    </VStack>:null}
+  </HStack>;
+}
+
+function Centered({text,size=13}){
+  return <VStack frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
+    <Text font={size} fontWeight="medium" foregroundStyle={COLORS.sub} lineLimit={2}
+      multilineTextAlignment="center">{text}</Text>
+  </VStack>;
+}
+
+function TodayList({plan,family}){
+  const large=family==='large'||family==='extraLarge';
+  const max=large?7:3,compact=family==='medium';
+  if(plan.lessons.length){
+    const rest=plan.lessons.length-max;
+    return <VStack alignment="leading" spacing={0} padding={{top:8}} frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+      <VStack alignment="leading" spacing={compact?5:8}>
+        {plan.lessons.slice(0,max).map(lesson=>
+          <LessonRow key={lesson.id||lesson.start} lesson={lesson} compact={compact} showTeacher={!compact}/>)}
+      </VStack>
+      <Spacer minLength={0}/>
+      {rest>0?<Text font={10} foregroundStyle={COLORS.faint}>还有 {rest} 节</Text>:null}
+    </VStack>;
   }
-  return chunks.join('\n');
+  if(plan.ahead)return <VStack alignment="leading" spacing={0} padding={{top:6}} frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+    <Text font={12} fontWeight="medium" foregroundStyle={COLORS.sub}>{plan.empty}</Text>
+    <Text font={11} fontWeight="semibold" foregroundStyle={COLORS.faint} padding={{top:6,bottom:4}}>{plan.ahead.title}</Text>
+    <VStack alignment="leading" spacing={5}>
+      {plan.ahead.lessons.slice(0,max-1).map(lesson=>
+        <LessonRow key={lesson.id||lesson.start} lesson={lesson} compact/>)}
+    </VStack>
+    <Spacer minLength={0}/>
+  </VStack>;
+  return <Centered text={plan.empty}/>;
 }
 
-function CourseCard({course,compact=false,width,density='normal'}){
-  // Larger single today card; compact side-by-side today cards.
-  const smallText=density==='pair',largeText=density==='single';
-  const isSide=density==='side';
-  // Enlarge readable text without overflowing narrow two-card layouts.
-  const titleSize=smallText?(compact?10:11):largeText?(compact?15:17):(compact?13:15);
-  const detailSize=smallText?(compact?9:10):largeText?(compact?12:13):(compact?11:12);
-  const cardPadding=isSide?4:smallText?5:compact?7:8;
-  const sideFont=compact?12:13,sideDetailFont=compact?9:10;
-  const detailsColor=course.status==='current'?'#F0F7FF':
-    course.status==='done'?COLORS.muted:COLORS.faint;
-  const done=course.status==='done',current=course.status==='current';
-  const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
-  const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
-  // Modifier order matters: paint the rounded background AFTER sizing the
-  // card. Previously the visible background used its intrinsic text width
-  // and sat to the left inside an otherwise centered, fixed-width frame.
-  const cardStyle=modifiers()
-    .padding(cardPadding)
-    .frame(width?{width,alignment:'topLeading'}:{maxWidth:'infinity',alignment:'topLeading'})
-    .background({style:bg,shape:{type:'rect',cornerRadius:9}});
-  return <VStack key={course.id} alignment="leading" spacing={smallText?2:3}
-      modifiers={cardStyle}>
-    <Text font={isSide?sideFont:titleSize} fontWeight={current?'bold':'semibold'}
-      lineLimit={smallText?4:5} minScaleFactor={isSide?0.85:1}
-      multilineTextAlignment="leading" foregroundStyle={fg}>
-      {isSide?formatSideTitle(course.title):course.title}
+function TodaySmall({plan}){
+  const focus=plan.lessons.find(l=>l.state==='live'||l.state==='next')||plan.lessons[0];
+  if(!focus){
+    if(!plan.ahead)return <Centered text={plan.empty} size={12}/>;
+    const first=plan.ahead.lessons[0];
+    return <VStack alignment="leading" spacing={0} padding={{top:6}} frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+      <Text font={11} foregroundStyle={COLORS.sub} lineLimit={2}>{plan.empty}</Text>
+      <Spacer minLength={0}/>
+      <Text font={11} fontWeight="semibold" foregroundStyle={COLORS.faint} lineLimit={1} minScaleFactor={0.6}>
+        {plan.ahead.title.replace(' · ',' ')+' '+first.start}
+      </Text>
+      <Text font={14} fontWeight="bold" foregroundStyle={COLORS.text} lineLimit={2}>{first.name}</Text>
+    </VStack>;
+  }
+  const others=plan.lessons.length-1;
+  const live=focus.state==='live',next=focus.state==='next';
+  return <VStack alignment="leading" spacing={0} frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
+    <Spacer minLength={0}/>
+    {live||next?<Text font={11} fontWeight="semibold" foregroundStyle={live?COLORS.live:COLORS.accent}>
+      {live?'上课中':'下一节'}
+    </Text>:null}
+    <Text font={18} fontWeight="bold" foregroundStyle={COLORS.text} lineLimit={1} minScaleFactor={0.6}>
+      {focus.start+'–'+focus.end}
     </Text>
-    <Text font={isSide?sideDetailFont:detailSize} foregroundStyle={detailsColor}
-      lineLimit={isSide?1:2} minScaleFactor={isSide?0.72:1}>
-      {course.startLabel+'–'+course.endLabel}
-    </Text>
-    {course.location?<Text font={isSide?sideDetailFont:detailSize}
-      foregroundStyle={detailsColor}
-      lineLimit={2}>{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
-    {course.teacher&&!isSide?<Text font={detailSize}
-      foregroundStyle={detailsColor}
-      lineLimit={1}>{course.teacher}</Text>:null}
+    <Text font={14} fontWeight="semibold" foregroundStyle={tintText(focus.color||DEFAULT_TINT)} lineLimit={2}>{focus.name}</Text>
+    {focus.room?<Text font={11} foregroundStyle={COLORS.sub} lineLimit={1} minScaleFactor={0.8}>{focus.room}</Text>:null}
+    {live||next?<HStack spacing={0}>
+      {live?<Text font={11} foregroundStyle={COLORS.sub}>还剩 </Text>:null}
+      <DateLabel date={new Date(lessonMs(focus.date,live?focus.end:focus.start))} style={live?'timer':'relative'}
+        font={11} foregroundStyle={COLORS.sub} lineLimit={1} minScaleFactor={0.7}
+        frame={{width:live?52:96,alignment:'leading'}}/>
+    </HStack>:null}
+    <Spacer minLength={0}/>
+    {others>0?<Text font={10} foregroundStyle={COLORS.faint}>之后还有 {others} 节</Text>:null}
   </VStack>;
 }
 
-function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
-  const window=selectVisibleCourses(day,maxRows);
-  const dayColor=day.today?COLORS.blue:COLORS.dark;
-  return <VStack key={String(day.index)} alignment="center" spacing={compact?4:5}
-    frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}} padding={{top:1,bottom:2}}>
-      <Text font={compact?16:18} fontWeight="bold" foregroundStyle={dayColor}>
-        {day.label}
-      </Text>
-      <Text font={compact?10:11} foregroundStyle={day.today?COLORS.blue:COLORS.faint}
-        lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
-    </VStack>
-    {window.courses.length?window.courses.map(c=>
-      <HStack key={c.id} alignment="top" spacing={0}
-        frame={{width,alignment:'center'}}>
-        <Spacer minLength={0}/>
-        <CourseCard course={c} compact={compact} width={width-8}
-          density={emphasize?'single':'side'}/>
-        <Spacer minLength={0}/>
-      </HStack>):
-      <Text font={12} foregroundStyle={COLORS.muted}>无课</Text>}
-    {window.hiddenAfter>0?
-      <Text font={compact?10:11} foregroundStyle={COLORS.faint}>
-        +{window.hiddenAfter}节课
-      </Text>:null}
+// A live class gets a 1.5pt ring: the outer solid card shows around the inner tint.
+function LessonChip({lesson,width,height,large,more,needTime}){
+  const tint=lesson.color||DEFAULT_TINT,name=chipName(lesson,more);
+  const plan=chipPlan(lesson,name,{...chipOptions(large,width),height,needTime});
+  const {sz}=plan,live=lesson.state==='live',ring=live?1.5:0;
+  const fill=tintFill(tint,lesson.state==='past'?0.08:0.2);
+  const body=<VStack alignment="leading" spacing={0}
+    padding={{top:2-Math.min(ring,1),leading:4-ring,bottom:1,trailing:2}}
+    frame={fixed(width-2*ring,height-2*ring)}
+    background={{style:fill,shape:{type:'rect',cornerRadius:6-ring}}}
+    clipShape={{type:'rect',cornerRadius:6-ring}}>
+    {plan.time?<Text font={plan.timeSize} fontWeight="semibold" foregroundStyle={tintText(tint)}
+      lineLimit={plan.timeLines} minScaleFactor={0.9}>{plan.time}</Text>:null}
+    <Text font={sz.name} fontWeight="semibold" foregroundStyle={COLORS.text} lineLimit={plan.nameLines}
+      minScaleFactor={plan.nameFull?0.9:0.7} multilineTextAlignment="leading">{name}</Text>
+    {plan.room?<Text font={sz.room} foregroundStyle={COLORS.sub} lineLimit={plan.roomLines} minScaleFactor={0.9}>{plan.room}</Text>:null}
+    {plan.teacher?<Text font={sz.room} foregroundStyle={COLORS.faint} lineLimit={1} minScaleFactor={0.9}>{lesson.teachers}</Text>:null}
+  </VStack>;
+  if(!live)return body;
+  return <VStack frame={fixed(width,height,'center')}
+    background={{style:tint,shape:{type:'rect',cornerRadius:6}}}>{body}</VStack>;
+}
+
+function WeekGrid({columns,family,size,stale}){
+  const {large,gap,axisSize,axisWidth,colWidth,gridHeight,layout}=weekGrid(columns,size,family);
+  const axisInner=axisWidth-gap;
+  return <VStack alignment="leading" spacing={0} padding={{top:6}}>
+    <HStack alignment="top" spacing={gap}>
+      <Spacer frame={{width:axisInner,height:1}}/>
+      {columns.map(col=><Text key={col.date} font={11} fontWeight={col.isToday?'bold':'medium'}
+        foregroundStyle={col.isToday?COLORS.accent:COLORS.sub} lineLimit={1}
+        frame={{width:colWidth,alignment:'center'}}>{weekdayName(col)}</Text>)}
+    </HStack>
+    {layout.labels.length?<HStack alignment="top" spacing={gap} padding={{top:4}}>
+      <ZStack alignment="topLeading" frame={fixed(axisInner,gridHeight)}>
+        {layout.labels.map((label,i)=>{
+          const next=i+1<layout.labels.length?layout.labels[i+1].top:gridHeight;
+          const unit=label.unit?'第'+label.unit+'节':'';
+          const showUnit=unit&&next-label.top-LABEL_H>=LABEL_H&&textWidth(unit,8)<=axisInner;
+          return <VStack key={label.idx} alignment="leading" spacing={0} padding={{top:label.top}}>
+            <Text font={axisSize} fontWeight="semibold" foregroundStyle={COLORS.sub} lineLimit={1}
+              minScaleFactor={0.9} frame={{width:axisInner,height:LABEL_H,alignment:'leading'}}>{label.text}</Text>
+            {showUnit?<Text font={8} foregroundStyle={COLORS.faint} lineLimit={1}
+              frame={{width:axisInner,height:LABEL_H,alignment:'leading'}}>{unit}</Text>:null}
+          </VStack>;
+        })}
+      </ZStack>
+      {columns.map((col,i)=><ZStack key={col.date} alignment="topLeading" frame={fixed(colWidth,gridHeight)}>
+        {layout.cols[i].map(it=><VStack key={it.item.id||it.item.start} padding={{top:it.top}}>
+          <LessonChip lesson={it.item} width={colWidth} height={Math.max(10,it.height-1.5)}
+            large={large} more={it.more} needTime={!it.labeled}/>
+        </VStack>)}
+      </ZStack>)}
+    </HStack>:<Centered text={stale?'数据过旧，点开刷新':'这一周没有课'} size={12}/>}
   </VStack>;
 }
 
-// The left side holds exactly the current (or next) class. The right side
-// stacks later upcoming classes; completed lessons are intentionally omitted.
-function TodayPairColumn({day,width,compact=false,gap=5,showAll=false}){
-  const columns=selectTodayColumns(day,showAll?3:1);
-  const cardWidth=Math.max(25,Math.floor((width-gap)/2));
-  return <VStack alignment="center" spacing={compact?4:5}
-      frame={{width,alignment:'top'}}>
-    <VStack spacing={1} frame={{width}} padding={{top:1,bottom:2}}>
-      <Text font={compact?16:18} fontWeight="bold" foregroundStyle={COLORS.blue}>
-        {day.label}
-      </Text>
-      <Text font={compact?10:11} foregroundStyle={COLORS.blue}
-        lineLimit={1}>{day.weekday} {day.dateLabel}</Text>
-    </VStack>
-    <HStack alignment="top" spacing={gap} frame={{width,alignment:'topLeading'}}>
-      <VStack frame={{width:cardWidth,alignment:'topLeading'}}>
-        {columns.focus?<CourseCard course={columns.focus} compact={compact}
-          width={cardWidth} density="pair"/>:null}
-      </VStack>
-      <VStack alignment="center" spacing={compact?4:6}
-          frame={{width:cardWidth,alignment:'top'}}>
-        {columns.future.map(c=>
-          <CourseCard key={c.id} course={c} compact={compact}
-            width={cardWidth} density="pair"/>)}
-        {columns.hiddenAfter>0?<Text font={compact?10:11}
-          foregroundStyle={COLORS.faint}>+{columns.hiddenAfter}节课</Text>:null}
-      </VStack>
+function Accessory({plan,family}){
+  const focus=plan.lessons.find(l=>l.state==='live'||l.state==='next');
+  const ahead=plan.ahead&&plan.ahead.lessons[0];
+  if(family==='accessoryInline')return <Text widgetBackground="clear">
+    {focus?focus.start+' '+focus.name+(focus.room?' @'+focus.room:''):plan.empty||'今天没有课'}
+  </Text>;
+  if(family==='accessoryCircular'){
+    const label=focus?(focus.state==='live'?'下课':'上课'):ahead?weekdayName(plan.ahead.day):'';
+    const value=focus?(focus.state==='live'?focus.end:focus.start):ahead?ahead.start:'—';
+    return <VStack alignment="center" spacing={0} widgetBackground="clear">
+      {label?<Text font={10}>{label}</Text>:null}
+      <Text font={14} fontWeight="bold" lineLimit={1} minScaleFactor={0.7}>{value}</Text>
+    </VStack>;
+  }
+  if(!focus)return <VStack alignment="leading" spacing={0} widgetBackground="clear"
+    frame={{maxWidth:'infinity',alignment:'leading'}}>
+    <Text font={13} fontWeight="semibold" lineLimit={1}>{plan.empty||'今天没有课'}</Text>
+    {ahead?<Text font={11} lineLimit={1}>{plan.ahead.title}</Text>:null}
+    {ahead?<Text font={12} lineLimit={1}>{ahead.start+' '+ahead.name}</Text>:null}
+  </VStack>;
+  const live=focus.state==='live';
+  return <VStack alignment="leading" spacing={0} widgetBackground="clear"
+    frame={{maxWidth:'infinity',alignment:'leading'}}>
+    <Text font={13} fontWeight="semibold" lineLimit={1}>{(live?'上课中':focus.start)+' '+focus.name}</Text>
+    <Text font={12} lineLimit={1}>{[focus.room,focus.start+'–'+focus.end].filter(Boolean).join(' · ')}</Text>
+    <HStack spacing={0}>
+      {live?<Text font={12}>还剩 </Text>:null}
+      <DateLabel date={new Date(lessonMs(focus.date,live?focus.end:focus.start))} style={live?'timer':'relative'}
+        font={12} lineLimit={1} frame={{width:96,alignment:'leading'}}/>
     </HStack>
   </VStack>;
 }
 
-// GeometryReader measures the actual widget CONTENT rect, rather than the
-// screen's width. A conservative inset prevents clipping at rounded corners.
-// No footer or stretchy Spacer can push the title outside the visible area.
-function RollingPanel({model,family}){
-  const medium=family==='systemMedium';
+function Canvas({url,children}){
+  return <VStack alignment="leading" spacing={0} padding={PADDING} widgetBackground={BG} widgetURL={url}
+    frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>{children}</VStack>;
+}
+
+function TodayPanel({model,family,url}){
+  const plan=buildPlan(model);
+  return <Canvas url={url}>
+    <Header title={plan.title} subtitle={daySubtitle(plan.day)} note={headerNote(model,plan.day,family)} family={family}/>
+    {family==='small'?<TodaySmall plan={plan}/>:<TodayList plan={plan} family={family}/>}
+  </Canvas>;
+}
+
+// GeometryReader measures the real widget instead of a per-device size table.
+function WeekPanel({model,family,url}){
+  const {title,block}=weekToShow(model);
+  const columns=weekColumns(block,model.clock);
   return <GeometryReader>
-    {proxy=>{
-      const width=proxy.size.width,height=proxy.size.height;
-      // Exactly three day groups; headings and cards share the same center.
-      const safeInset=medium?9:12,gap=medium?4:6;
-      const days=model.days.slice(0,3);
-      const today=days.find(d=>d.today);
-      const todayFocus=selectTodayPair(today);
-      const expanded=todayFocus.courses.length>1;
-      const usableWidth=Math.max(96,width-2*safeInset-2*gap);
-      // Three equal widths for a single today card. A visible pair gets
-      // half of the available width; each neighbor gets one quarter.
-      const sideWidth=Math.floor(usableWidth/(expanded?4:3));
-      const todayWidth=usableWidth-sideWidth*2;
-      const maxRows=medium?1:height>=370?3:height>=290?2:1;
-      const showAllToday=!medium&&height>=290;
-      return <VStack alignment="leading" spacing={0}
-        padding={safeInset}
-        widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
-        frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-        <HStack alignment="top" spacing={gap}
-          frame={{maxWidth:'infinity',alignment:'leading'}}>
-          {days.map(day=>day.today&&expanded
-            ?<TodayPairColumn key="today-pair" day={day}
-              width={todayWidth} compact={medium} gap={gap}
-              showAll={showAllToday}/>
-            :<DayColumn key={String(day.index)}
-              day={day.today?{...day,courses:todayFocus.courses}:day}
-              width={day.today?todayWidth:sideWidth}
-              compact={medium} maxRows={maxRows}
-              emphasize={day.today&&!expanded}/> )}
-        </HStack>
-      </VStack>;
-    }}
+    {proxy=><Canvas url={url}>
+      <Header title={title} subtitle={weekSubtitle(block)} note={headerNote(model,block.days[0],family)} family={family}/>
+      <WeekGrid columns={columns} family={family} stale={model.stale}
+        size={{width:proxy.size.width,height:proxy.size.height}}/>
+    </Canvas>}
   </GeometryReader>;
 }
 
-function SmallPanel({model}){
-  const today=model.days.find(d=>d.today);
-  const classes=today?.courses||[];
-  const current=classes.find(x=>x.status==='current');
-  const next=classes.find(x=>x.status==='upcoming');
-  const chosen=current||next||classes[classes.length-1];
-  return <VStack alignment="leading" spacing={8} padding={20}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
-    frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'topLeading'}}>
-    <Text font={18} fontWeight="bold" foregroundStyle={COLORS.dark}>
-      今天
-    </Text>
-    <Spacer minLength={0}/>
-    {chosen?<VStack alignment="leading" spacing={5}
-      background={{style:chosen.status==='done'?COLORS.doneBg:
-        chosen.status==='current'?COLORS.activeBg:COLORS.nextBg,
-        shape:{type:'rect',cornerRadius:10}}}
-      padding={9}>
-      <Text font={15} fontWeight="semibold" lineLimit={2}
-        foregroundStyle={chosen.status==='done'?COLORS.muted:chosen.status==='current'?'#FFFFFF':COLORS.dark}>{chosen.title}</Text>
-      <Text font={11} foregroundStyle={COLORS.faint}>{chosen.startLabel}-{chosen.endLabel}</Text>
-      <Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.location}</Text>
-      {chosen.teacher?<Text font={11} foregroundStyle={COLORS.faint} lineLimit={1}>{chosen.teacher}</Text>:null}
-    </VStack>:
-    <Text font={14} foregroundStyle={COLORS.faint}>今天没有课程</Text>}
-    <Spacer minLength={0}/>
-  </VStack>;
-}
-
-function EmptyPanel({kind='empty',code=''}) {
+function EmptyPanel({kind='empty',code='',url}) {
   const failure=kind==='invalid';
   const label=failure?'缓存读取失败':'尚无课表缓存';
   const guidance=code==='OPEN_MAIN_ONCE'?'请打开一次 CourseSync，自动建立组件缓存':
     failure?'请反馈下方代码以便定位；课表和登录信息未被修改':
     '打开 CourseSync 完成首次课表同步';
-  return <VStack alignment="leading" spacing={9} padding={22}
-    widgetBackground={{light:'#FFFFFF',dark:'#FFFFFF'}}
-    frame={{maxWidth:'infinity',maxHeight:'infinity',alignment:'center'}}>
-    <Text font={16} fontWeight="bold" foregroundStyle={COLORS.dark}>CourseSync</Text>
-    <Text font={12} fontWeight="medium" foregroundStyle={COLORS.faint}>{label}</Text>
-    <Text font={11} foregroundStyle={COLORS.faint} lineLimit={3}>{guidance}</Text>
-    {failure?<Text font={10} foregroundStyle={COLORS.muted}>诊断：{code||'UNKNOWN'}</Text>:null}
-  </VStack>;
+  return <Canvas url={url}>
+    <Text font={13} fontWeight="bold" foregroundStyle={COLORS.text}>CourseSync</Text>
+    <Spacer minLength={0}/>
+    <Text font={12} fontWeight="medium" foregroundStyle={COLORS.sub}>{label}</Text>
+    <Text font={12} foregroundStyle={COLORS.sub} lineLimit={4}>{guidance}</Text>
+    {failure?<Text font={10} foregroundStyle={COLORS.faint}>诊断：{code||'UNKNOWN'}</Text>:null}
+    <Spacer minLength={0}/>
+  </Canvas>;
 }
 
+const family=normalizeFamily(Widget.family);
+const mode=parseMode(Widget.parameter,family);
+// Tapping anywhere opens the CourseSync main menu, the local counterpart of the reference's website link.
+let url;
+try{url=Script.createRunURLScheme(Script.name,{mode:'menu'});}catch(_){url=undefined;}
 const snapshot=loadBestWidgetState(FileManager,typeof Storage!=='undefined'?Storage:null);
 if(snapshot.kind!=='ready'){
-  Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code}/>,
+  Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code} url={url}/>,
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
 }else{
   const model=buildWidgetModel(snapshot.state,Date.now());
-  const family=Widget.family;
-  Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
-    ?<SmallPanel model={model}/>
-    :<RollingPanel model={model} family={family}/>,
+  Widget.present(family.startsWith('accessory')?<Accessory plan={buildPlan(model)} family={family}/>:
+    mode==='week'?<WeekPanel model={model} family={family} url={url}/>:
+    <TodayPanel model={model} family={family} url={url}/>,
     {policy:'after',date:widgetReloadDate(model)});
 }
 

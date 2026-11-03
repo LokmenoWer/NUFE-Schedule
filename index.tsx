@@ -1373,12 +1373,21 @@ function widgetCacheProjection(state,now=Date.now()){
         teacher:[...new Set((Array.isArray(e.teachers)?e.teachers:[])
           .filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))]
           .join('、').slice(0,75),
-        start:e.start,end:e.end
+        start:e.start,end:e.end,
+        ...(Number.isInteger(e.week)?{week:e.week}:{}),
+        ...(Number.isInteger(e.su)&&Number.isInteger(e.eu)?{su:e.su,eu:e.eu}:{})
       });
       if(courses.length>400)return null; // Never silently truncate classes.
     }
   }
-  return {version:1,lastCheck:state.lastCheck,events:courses};
+  // First and last class date per term, for the widget's empty-state wording.
+  const terms=[];
+  for(const term of Object.values(state.semesters)){
+    const dates=(term&&Array.isArray(term.events)?term.events:[])
+      .map(e=>e&&typeof e.start==='string'?Date.parse(e.start):NaN).filter(Number.isFinite).sort((x,y)=>x-y);
+    if(dates.length)terms.push([dates[0],dates[dates.length-1]].map(t=>new Date(t+8*3600000).toISOString().slice(0,10)));
+  }
+  return {version:1,lastCheck:state.lastCheck,terms,events:courses};
 }
 function publishWidgetCache(state,now=Date.now()){
   const storage=HostStorage;
