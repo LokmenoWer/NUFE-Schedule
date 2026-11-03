@@ -2,8 +2,8 @@
 const {test}=require('node:test');const a=require('node:assert/strict');const vm=require('node:vm');const fs=require('node:fs');const crypto=require('node:crypto');
 const source=fs.readFileSync(__dirname+'/../index.tsx','utf8')
  .replace('import * as Scripting from "scripting";', 'const Scripting=globalThis.__sdk;')
- .replace("import { presentNativeCredentialForm, presentNativeTextForm } from './login-native';",
-   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);')
+ .replace("import { presentNativeCredentialForm, presentNativeTextForm, presentNativeEndpointForm } from './login-native';",
+   'const presentNativeCredentialForm=(...args)=>globalThis.__nativeCredentialMock(...args);const presentNativeTextForm=(...args)=>globalThis.__nativeTextMock(...args);const presentNativeEndpointForm=(...args)=>globalThis.__nativeEndpointMock(...args);')
  .replace("import { createNativeProgressView } from './progress-native';",
    'const createNativeProgressView=(...args)=>globalThis.__progressUIFactory(...args);');
 async function env({mode="sync",hostEnv="intent"}={}){
