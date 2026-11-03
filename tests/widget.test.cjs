@@ -348,7 +348,7 @@ test('single visible today lesson gets large text and three equal day widths',()
  a.match(ui,/sideWidth=Math\.floor\(usableWidth\/\(expanded\?4:3\)\)/);
  a.match(ui,/todayWidth=usableWidth-sideWidth\*2/);
  a.match(ui,/emphasize=\{day\.today&&!expanded\}/);
- a.match(ui,/density=\{emphasize\?'single':'normal'\}/);
+ a.match(ui,/density=\{emphasize\?'single':'side'\}/);
  a.match(ui,/largeText\?\(compact\?15:17\)/);
 });
 test('only two visible today cards activate smaller pair typography',()=>{
@@ -512,7 +512,22 @@ test('README documents the actual three-day UI and retains installation screensh
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
 });
-test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/current\?'#F0F7FF':done\?COLORS.muted/); });
+test('widget uses contrast-safe white lettering on bright blue in-progress classes',()=>{ const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8'); a.match(ui,/current\?'#FFFFFF':COLORS.dark/); a.match(ui,/course.status==='current'\?'#F0F7FF':/); });
+test('narrow yesterday and tomorrow cards preserve full course names',()=>{
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  const fn=ui.match(/function formatSideTitle\\(title\\)\\{[\\s\\S]*?\\n\\}/);
+  a.ok(fn,'side title formatter should exist');
+  const wrap=vm.runInNewContext(fn[0]+'\\nformatSideTitle',{Array,String,Math});
+  a.equal(wrap('微观经济学'),'微观经\\n济学');
+  a.equal(wrap('管理学原理'),'管理学\\n原理');
+  a.equal(wrap('证券投资学'),'证券投\\n资学');
+  a.equal(wrap('Financial Markets'),'Financial Markets');
+  a.match(ui,/isSide\\?formatSideTitle\\(course\\.title\\):course\\.title/);
+  a.ok(ui.includes("course.startLabel+'\\n'+course.endLabel"));
+  a.ok(ui.includes("String(course.location).replace(/\\s+/, '\\n')"));
+  a.match(ui,/course\\.teacher&&!isSide/);
+});
+
 test('widget keeps white canvas, distinct colored cards and symmetric rounded-corner safe inset',()=>{
  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
  a.match(ui,/safeInset=medium\?9:12/);
