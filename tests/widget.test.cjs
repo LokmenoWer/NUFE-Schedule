@@ -494,7 +494,7 @@ test('readable three-day widget uses larger but density-aware typography',()=>{
  a.match(ui,/<Text font=\{15\} fontWeight="semibold" lineLimit=\{2\}/);
  a.match(ui,/foregroundStyle=\{chosen\.status==='done'\?COLORS\.muted:chosen\.status==='current'\?'#FFFFFF':COLORS\.dark\}/);
 });
-test('README documents the actual three-day UI and retains installation screenshots',()=>{
+test('README documents the three-day UI without screenshots',()=>{
  const readme=fs.readFileSync(__dirname+'/../README.md','utf8');
  a.match(readme,/## 项目介绍/);
  a.match(readme,/## 用户指南/);
@@ -502,9 +502,7 @@ test('README documents the actual three-day UI and retains installation screensh
  a.match(readme,/今天一节可见课程/);
  a.match(readme,/今天有多节课程/);
  a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
- for(const file of ['scripting-import-menu.webp','scripting-remote-zip.webp','scripting-project-card.webp','shortcuts-automation.webp','scripting-refresh-menu.webp']){
-  a.match(readme,new RegExp('docs/images/'+file.replaceAll('.','\\.')));
- }
+ a.doesNotMatch(readme,/docs\\/images\\/|<img\\b|!\\[[^\\]]*\\]\\(/i);
  a.match(readme,/releases\/download\/stable\/CourseSync\.zip/);
  a.match(readme,/退出登录/);
  a.match(readme,/不需要重新导入项目|不需要重新创建/);
