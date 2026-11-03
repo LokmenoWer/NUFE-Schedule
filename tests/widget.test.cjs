@@ -500,7 +500,7 @@ test('README documents the actual three-day UI and retains installation screensh
  a.match(readme,/## 用户指南/);
  a.match(readme,/昨天、今天、明天/);
  a.match(readme,/今天一节可见课程/);
- a.match(readme,/今天两节可见课程/);
+ a.match(readme,/今天有多节课程/);
  a.doesNotMatch(readme,/四天|四日|固定显示.{0,15}后天|临时组件测试模式|自动登录凭据.*查看/);
  for(const file of ['scripting-import-menu.webp','scripting-remote-zip.webp','scripting-project-card.webp','shortcuts-automation.webp','scripting-refresh-menu.webp']){
   a.match(readme,new RegExp('docs/images/'+file.replaceAll('.','\\.')));
