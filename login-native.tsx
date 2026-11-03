@@ -54,7 +54,7 @@ function LoginView({ title }: { title: string }) {
   </NavigationStack>;
 }
 
-export async function presentNativeCredentialForm(title = 'NUFE 登录') {
+export async function presentNativeCredentialForm(title = 'CourseSync 登录') {
   const result = await Navigation.present({
     element: <LoginView title={title} />,
     modalPresentationStyle: 'pageSheet',
