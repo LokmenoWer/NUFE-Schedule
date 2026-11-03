@@ -2,7 +2,7 @@
 // NUFE-Schedule Home Screen widget. This entry is independent of index.tsx:
 // renders only the already synchronized local timetable snapshot.
 import { FileManager, Widget, Text, VStack, HStack, Spacer, GeometryReader, Script, modifiers } from 'scripting';
-import { loadBestWidgetState, buildWidgetModel, buildSamplePreview, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
+import { loadBestWidgetState, buildWidgetModel, selectVisibleCourses, selectTodayPair, selectTodayColumns, widgetReloadDate } from './widget-data';
 
 const COLORS={
   // Opaque white canvas in all appearance modes; only course statuses tint.
@@ -212,28 +212,17 @@ function EmptyPanel({kind='empty',code=''}) {
   </VStack>;
 }
 
-// Temporary UI-only switch. Turn off after checking the nine-course layout.
-// No demo courses are written to Storage or Apple Calendar.
-const SHOW_SAMPLE_COURSES=true;
-const snapshot=SHOW_SAMPLE_COURSES?null:
-  loadBestWidgetState(FileManager,typeof Storage!=='undefined'?Storage:null);
-if(!SHOW_SAMPLE_COURSES&&snapshot.kind!=='ready'){
+const snapshot=loadBestWidgetState(FileManager,typeof Storage!=='undefined'?Storage:null);
+if(snapshot.kind!=='ready'){
   Widget.present(<EmptyPanel kind={snapshot.kind} code={snapshot.code}/>,
     {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
 }else{
-  const model=SHOW_SAMPLE_COURSES
-    ?buildSamplePreview(Date.now())
-    :buildWidgetModel(snapshot.state,Date.now());
-  if(!model){
-    Widget.present(<EmptyPanel kind="empty" code="NO_COURSES"/>,
-      {policy:'after',date:new Date(Date.now()+2*60*60*1000)});
-  }else{
-    const family=Widget.family;
-    Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
-      ?<SmallPanel model={model}/>
-      :<RollingPanel model={model} family={family}/>,
-      {policy:'after',date:widgetReloadDate(model)});
-  }
+  const model=buildWidgetModel(snapshot.state,Date.now());
+  const family=Widget.family;
+  Widget.present(family==='systemSmall'||String(family).startsWith('accessory')
+    ?<SmallPanel model={model}/>
+    :<RollingPanel model={model} family={family}/>,
+    {policy:'after',date:widgetReloadDate(model)});
 }
 
 // Required by the Scripting widget lifecycle after presenting the view.
