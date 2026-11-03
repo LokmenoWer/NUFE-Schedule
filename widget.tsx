@@ -12,13 +12,32 @@ const COLORS={
   activeBg:'#238BFF'
 };
 
+// Narrow neighbor columns need explicit CJK line breaks. SwiftUI otherwise
+// gives the long detail stack priority and truncates the title to one line.
+function formatSideTitle(title){
+  const value=String(title||'');
+  const chars=Array.from(value);
+  if(chars.length<=4||!/[㐀-鿿]/.test(value))return value;
+  const lines=Math.ceil(chars.length/4);
+  const chunks=[];
+  for(let i=0;i<lines;i++){
+    const count=Math.ceil((chars.length)/ (lines-i));
+    chunks.push(chars.splice(0,count).join(''));
+  }
+  return chunks.join('\n');
+}
+
 function CourseCard({course,compact=false,width,density='normal'}){
   // Larger single today card; compact side-by-side today cards.
   const smallText=density==='pair',largeText=density==='single';
+  const isSide=density==='side';
   // Enlarge readable text without overflowing narrow two-card layouts.
   const titleSize=smallText?(compact?10:11):largeText?(compact?15:17):(compact?13:15);
   const detailSize=smallText?(compact?9:10):largeText?(compact?12:13):(compact?11:12);
-  const cardPadding=smallText?5:compact?7:8;
+  const cardPadding=isSide?4:smallText?5:compact?7:8;
+  const sideFont=compact?12:13,sideDetailFont=compact?9:10;
+  const detailsColor=course.status==='current'?'#F0F7FF':
+    course.status==='done'?COLORS.muted:COLORS.faint;
   const done=course.status==='done',current=course.status==='current';
   const fg=done?COLORS.finished:current?'#FFFFFF':COLORS.dark;
   const bg=done?COLORS.doneBg:current?COLORS.activeBg:COLORS.nextBg;
@@ -31,15 +50,18 @@ function CourseCard({course,compact=false,width,density='normal'}){
     .background({style:bg,shape:{type:'rect',cornerRadius:9}});
   return <VStack key={course.id} alignment="leading" spacing={smallText?2:3}
       modifiers={cardStyle}>
-    <Text font={titleSize} fontWeight={current?'bold':'semibold'}
-      lineLimit={smallText?4:5} foregroundStyle={fg}>{course.title}</Text>
-    <Text font={detailSize} foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
-      lineLimit={2}>{course.startLabel}–{course.endLabel}</Text>
-    {course.location?<Text font={detailSize}
-      foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
-      lineLimit={2}>{course.location}</Text>:null}
-    {course.teacher?<Text font={detailSize}
-      foregroundStyle={current?'#F0F7FF':done?COLORS.muted:COLORS.faint}
+    <Text font={isSide?sideFont:titleSize} fontWeight={current?'bold':'semibold'}
+      lineLimit={smallText?4:5} minScaleFactor={isSide?0.85:1}
+      multilineTextAlignment="leading" foregroundStyle={fg}>
+      {isSide?formatSideTitle(course.title):course.title}
+    </Text>
+    <Text font={isSide?sideDetailFont:detailSize} foregroundStyle={detailsColor}
+      lineLimit={2}>{isSide?course.startLabel+'\n'+course.endLabel:course.startLabel+'–'+course.endLabel}</Text>
+    {course.location?<Text font={isSide?sideDetailFont:detailSize}
+      foregroundStyle={detailsColor}
+      lineLimit={2}>{isSide?String(course.location).replace(/\s+/, '\n'):course.location}</Text>:null}
+    {course.teacher&&!isSide?<Text font={detailSize}
+      foregroundStyle={detailsColor}
       lineLimit={1}>{course.teacher}</Text>:null}
   </VStack>;
 }
@@ -61,7 +83,7 @@ function DayColumn({day,width,compact=false,maxRows=1,emphasize=false}){
         frame={{width,alignment:'center'}}>
         <Spacer minLength={0}/>
         <CourseCard course={c} compact={compact} width={width-8}
-          density={emphasize?'single':'normal'}/>
+          density={emphasize?'single':'side'}/>
         <Spacer minLength={0}/>
       </HStack>):
       <Text font={12} foregroundStyle={COLORS.muted}>无课</Text>}
