@@ -1,4 +1,4 @@
-# NUFE-Schedule 工程化计划
+# CourseSync 工程化计划
 
 ## 已落地
 
@@ -9,7 +9,7 @@
 
 ## 发布机制与兼容性
 
-唯一安装包下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。仓库根目录不再跟踪 ZIP，旧 Raw 路径不再维护，请统一从 Release 安装和更新。每次 `main` 成功通过测试并发布 ZIP 后，将固定 `stable` 标签更新到该次主分支提交，使 Release 页面自动生成的 Source code 压缩包与成功发布的代码版本保持一致；未通过测试时不更新标签或安装包。Release 标题始终为 `NUFE-Schedule`，发行说明统一维护在 `docs/release-notes.md`。为防止并发发布回退，过时的工作流运行会跳过发布。
+唯一安装包下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。仓库根目录不再跟踪 ZIP，旧 Raw 路径不再维护，请统一从 Release 安装和更新。每次 `main` 成功通过测试并发布 ZIP 后，将固定 `stable` 标签更新到该次主分支提交，使 Release 页面自动生成的 Source code 压缩包与成功发布的代码版本保持一致；未通过测试时不更新标签或安装包。Release 标题始终为 `CourseSync`，发行说明统一维护在 `docs/release-notes.md`。为防止并发发布回退，过时的工作流运行会跳过发布。
 
 ## 技术评估与后续改进方向
 
