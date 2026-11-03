@@ -161,6 +161,24 @@ let SSO=ENDPOINT_DEFAULTS.sso;
 let TABLE=ENDPOINT_DEFAULTS.table;
 let SEMESTER_ENDPOINT=ENDPOINT_DEFAULTS.semester;
 let COURSE_DATA_ENDPOINT=ENDPOINT_DEFAULTS.courses;
+const SCHOOL_KEY='CourseSync.Local.v1.school';
+const SCHOOL_WHITELIST=Object.freeze([
+  Object.freeze({id:'nufe',name:'南京财经大学',endpoints:ENDPOINT_DEFAULTS})
+]);
+function schoolById(id){return SCHOOL_WHITELIST.find(s=>s.id===id)||null;}
+function loadSelectedSchool(){
+  try{
+    if(!Keychain.contains(SCHOOL_KEY))return 'nufe';
+    const id=Keychain.get(SCHOOL_KEY);
+    return schoolById(id)?id:'nufe';
+  }catch(_){return 'nufe';}
+}
+function activateSelectedSchool(id){
+  const school=schoolById(id);
+  assert(school,'SCHOOL_UNSUPPORTED');
+  activateEndpointSettings(school.endpoints);
+  return school;
+}
 const KEY = 'CourseSync.Local.v1.cookies';
 // Scripting Keychain is device/app-level credential storage; never store this key in JSON state.
 const CRED_KEY = 'CourseSync.Local.v1.saved-login'; // Legacy device-only credential key.
@@ -330,14 +348,8 @@ function validateEndpointSettings(value) {
   }
   return result;
 }
-function loadEndpointSettings(){
-  try{
-    if(!Keychain.contains(ENDPOINT_KEY))return {...ENDPOINT_DEFAULTS};
-    const saved=JSON.parse(Keychain.get(ENDPOINT_KEY));
-    if(!saved||saved.version!==1)return {...ENDPOINT_DEFAULTS};
-    return validateEndpointSettings(saved.values);
-  }catch(_){return {...ENDPOINT_DEFAULTS};}
-}
+// Old manually edited endpoint overrides are deliberately ignored.
+function loadEndpointSettings(){return {...ENDPOINT_DEFAULTS};}
 function activateEndpointSettings(value){
   const valid=validateEndpointSettings(value);
   AUTH=valid.auth;SSO=valid.sso;TABLE=valid.table;
@@ -355,27 +367,22 @@ async function prepareManualRefresh(state){
   if(!config.runsInApp)fail('AUTH_INTERACTIVE_REQUIRED');
   const allowReuse=!state?.signedOut&&canOfferSignOut(state);
   let response;
-  try{response=await presentNativeRefreshForm(ENDPOINT_DEFAULTS,allowReuse);}
-  catch(_){fail('ENDPOINT_UI');}
-  if(!response)return null; // Native cancel: do not start or mutate a sync.
-  const chosen={};
-  for(const key of Object.keys(ENDPOINT_DEFAULTS)){
-    const custom=response.values?.[key];
-    assert(typeof custom==='string'&&custom===custom.trim(),'ENDPOINT_CONFIG');
-    chosen[key]=custom||ENDPOINT_DEFAULTS[key];
-  }
-  const settings=validateEndpointSettings(chosen);
   try{
-    if(Object.keys(settings).every(k=>settings[k]===ENDPOINT_DEFAULTS[k])){
-      if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
-      if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
-    }else{
-      const value=JSON.stringify({version:1,values:settings});
-      Keychain.set(ENDPOINT_KEY,value);
-      if(Keychain.get(ENDPOINT_KEY)!==value)fail('ENDPOINT_STORAGE');
-    }
+    response=await presentNativeRefreshForm(
+      SCHOOL_WHITELIST.map(s=>({id:s.id,name:s.name})),
+      loadSelectedSchool(),allowReuse);
+  }catch(_){fail('ENDPOINT_UI');}
+  if(!response)return null;
+  const school=schoolById(response.schoolId);
+  assert(school,'SCHOOL_UNSUPPORTED');
+  // Do not keep the old custom URLs alive in the background.
+  try{
+    Keychain.set(SCHOOL_KEY,school.id);
+    if(Keychain.get(SCHOOL_KEY)!==school.id)fail('ENDPOINT_STORAGE');
+    if(Keychain.contains(ENDPOINT_KEY))Keychain.remove(ENDPOINT_KEY);
+    if(Keychain.contains(ENDPOINT_KEY))fail('ENDPOINT_STORAGE');
   }catch(_){fail('ENDPOINT_STORAGE');}
-  activateEndpointSettings(settings);
+  activateSelectedSchool(school.id);
   if(response.kind==='reuse')return {kind:'reuse'};
   assert(response.kind==='credentials'&&typeof response.username==='string'&&
     typeof response.password==='string'&&response.username.length<=100&&
@@ -1393,9 +1400,10 @@ const ERRORS={CLEANUP_NO_BASELINE:'尚未完成首次同步，不能识别哪些
 // For every error show a safe, concrete explanation and the next action.
 // Unknown runtime errors are called unknown instead of guessing that the password is wrong.
 const ERROR_GUIDE={
-  ENDPOINT_CONFIG:['接口地址不符合安全格式：必须使用当前允许的 HTTPS 域名，且学期接口必须包含一次 {sid}。','从「立即刷新」进入接口填写页，清空有问题的输入框即可恢复对应默认地址。无需清理日历或账号密码。'],
-  ENDPOINT_UI:['Scripting 原生刷新向导未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
-  ENDPOINT_STORAGE:['本机钥匙串未能成功保存或清除接口设置；未确认更改成功。','解锁 iPhone 后在 Scripting 中重新点击「立即刷新」；留空使用学校默认接口。'],
+  SCHOOL_UNSUPPORTED:['学校不在当前支持名单中，已停止请求且未修改课表。','从「立即刷新」的学校下拉菜单中选择已支持的学校。'],
+  ENDPOINT_CONFIG:['学校预设接口格式异常，已停止请求。','请更新 CourseSync 或联系维护者检查学校接口配置。'],
+  ENDPOINT_UI:['Scripting 原生学校选择页面未能打开；当前配置未修改。','更新 Scripting 后在前台重新点击「立即刷新」。'],
+  ENDPOINT_STORAGE:['本机钥匙串未能保存学校选择或清理旧接口设置，未确认更改成功。','解锁 iPhone 后重新点击「立即刷新」，选择学校重试。'],
   TX_TERM_UNAVAILABLE:['待恢复事务的学期已不在学校可访问学期列表中，未恢复旧目标或删除课程。','需要检查学校学期列表；保留本地备份和事务。'],
   EMPTY_SOURCE:['教务课表意外变空或没有可验证的新课程，未清理旧内容。','等学校数据恢复后重试；若确实全部停课，需人工核对。'],
   LEGACY_CHANGED:['备份后旧事件发生了变化，本次停止清理。','稍后刷新重新备份核对；新课程已保留。'],
@@ -2292,7 +2300,7 @@ async function run() {
   __COURSESYNC_BOOT_PHASE='初始化本地存储';
   const store=new Store();
   migrateLegacyKeychainData();
-  activateEndpointSettings(loadEndpointSettings());
+  activateSelectedSchool(loadSelectedSchool());
   let firstSetup=false;
   // A configured calendar stays configured even after explicitly logging out.
   if(HostScript.env==='index'){try{const initial=store.read();firstSetup=!initial.calendarId;}catch(_){}}
@@ -2408,7 +2416,7 @@ async function run() {
   }finally{if(manualAuth?.password)manualAuth.password='';if(progress)progress.finish();if(locked)store.release();Script.complete();}
 }
 // Node tests import the identical implementation; Scripting uses the async entry.
-if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,passwordLogin,coursePage,mfa,signOut,run};
+if(globalThis.__COURSESYNC_TEST__)module.exports={ScriptingAdapter:{FileManager,Keychain,CloudKeychain,Request,Alert,Calendar,CalendarEvent,Notification,WebView,config,args,Script,__mode},storedEventIndex,readableNotes,matchesOldCourse,polishTermNotes,removeMatchedOldCourses,selectTermIds,dedicatedWindows,dedicatedRows,verifyBaseline,replaceDedicatedLegacy,snapshotSignature,widgetCacheProjection,publishWidgetCache,createProgress,statusText,probeSchoolSession,inspectEnvironment,environmentCheckText,showEnvironmentCheck,showRunStatus,refreshResult,reportRefreshResult,refreshReminders,reportBackgroundFailure,automaticRetryText,notifyAuthExpiredOnce,validateRecords,validateState,readCookieJar,credentialForm,input,validSliderResult,calendarTitle,originalTitleFromCalendar,occurrenceKey,calendarRows,assertNonRecurring,writeVerified,finishTx,synchronize,reminders,safeURL,resolveURL,pageInfo,topId,hm,monday,detailMonday,explicitTeachingMonday,chooseAnchor,VERIFIED_TERM_ANCHORS,expand,same,plan,aesCBC,CookieJar,HTTP,fieldsFrom,encryptPassword,bounded,applyTransaction,deletionReady,fingerprint,ics,eventRecord,notes,Store,acquireSyncSlot,CalendarAdapter,pickCalendar,availableRecovery,applyRecovery,showRunStatus,showFailureRecovery,statusText,errorMessage,diagnosticCode,reasonFor,actionFor,requestLabel,networkErrorCode,loginPreflight,legacyEventKey,legacyLocationCompatible,selectLegacyDuplicates,scanLegacyDuplicates,backupLegacyICS,cleanupLegacyDuplicates,notifyAuthExpiredOnce,testAuthNotification,hasSavedCredentials,readSavedCredentials,saveCredentials,removeSavedCredentials,migrateSavedCredentials,credentialStorageStatus,migrateLegacyKeychainData,LEGACY_DEVICE_KEYS,validateEndpointSettings,loadEndpointSettings,activateEndpointSettings,termEndpoint,prepareManualRefresh,ENDPOINT_DEFAULTS,SCHOOL_WHITELIST,schoolById,loadSelectedSchool,activateSelectedSchool,passwordLogin,coursePage,mfa,signOut,run};
 else await run();
 
 /*
