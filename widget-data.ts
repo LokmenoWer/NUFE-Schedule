@@ -30,27 +30,11 @@ export function readWidgetMirror(storage){
       return {kind:'invalid',code:'STORAGE_SCHEMA'};
     events.push(e);
   }
-  let preview=null;
-  // Ignore caches from the previous 2025-2026-2 preview; the next
-  // opening of the main project regenerates the newly chosen test term.
-  if(obj.preview!=null&&obj.preview.term==='2024-2025-2'){
-    if(!obj.preview||
-       !Array.isArray(obj.preview.events)||obj.preview.events.length>400)
-      return {kind:'invalid',code:'STORAGE_SCHEMA'};
-    const items=[];
-    for(const e of obj.preview.events){
-      if(!e||typeof e.title!=='string'||typeof e.location!=='string'||
-         typeof e.start!=='string'||typeof e.end!=='string'||
-         (e.teacher!==undefined&&typeof e.teacher!=='string'))
-        return {kind:'invalid',code:'STORAGE_SCHEMA'};
-      items.push(e);
-    }
-    preview={term:obj.preview.term,events:items};
-  }
-  return {kind:'ready',state:{lastCheck:obj.lastCheck,preview,
+  // Legacy preview fields in older cached payloads are intentionally ignored.
+  return {kind:'ready',state:{lastCheck:obj.lastCheck,
     semesters:{widget:{events}}}};
-
 }
+
 export function loadBestWidgetState(files,storage){
   const mirror=readWidgetMirror(storage);
   if(mirror.kind==='ready')return mirror;
@@ -222,57 +206,6 @@ export function selectVisibleCourses(day,limit=1){
   return {courses:all.slice(0,n),hiddenAfter:Math.max(0,all.length-n),total:all.length};
 }
 
-// TEMPORARY TEST MODE: set this to null to restore the live timetable.
-// Only the widget presentation is affected; the sync engine and Apple Calendar
-// continue to use real semester dates and the normal current schedule.
-const WIDGET_PREVIEW_TERM=null;
-
-// Shift the historical teaching week by an integral number of weeks so the
-// original weekdays and time-of-day are preserved. Choose a *real* teaching
-// week with the most classes today, then with the most classes in the three-day
-// window. Never invent courses, and never mix different historical weeks.
-export function buildHistoricalPreview(state,now=Date.now()){
-  const at=now instanceof Date?now.getTime():Number(now);
-  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
-  const src=state?.preview;
-  if(!src||src.term!=='2024-2025-2'||!Array.isArray(src.events))return null;
-  const valid=[];
-  for(const e of src.events){
-    if(!e||typeof e.start!=='string'||typeof e.end!=='string')continue;
-    const start=Date.parse(e.start),end=Date.parse(e.end);
-    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>DAY)continue;
-    valid.push({e,start,end});
-  }
-  if(!valid.length)return null;
-  // Test the actual 2024-2025-2 week 2 courses, not today's weekday.
-  // Anchor its Monday to the device's today, so the busiest source day can
-  // exercise the two-card layout on any calendar date.
-  const secondMonday=Date.UTC(2025,2,3)-BEIJING;
-  const currentMonday=weekStartBeijing(at);
-  const todayOffset=Math.floor((at-currentMonday)/DAY);
-  const todayStart=currentMonday+todayOffset*DAY;
-  const from=secondMonday-DAY,to=secondMonday+2*DAY;
-  const selected=valid.filter(c=>c.start>=from&&c.start<to);
-  if(!selected.length)return null;
-  const best={monday:secondMonday,selected};
-  const shift=todayStart-secondMonday;
-  // At night, live clock time would collapse the preview to one finished card.
-  // Pin PREVIEW status to 09:00 Beijing to exercise current/next/remaining.
-  // Production/live schedule continues to use the real clock.
-  const previewAt=todayStart+9*HOUR;
-  const events=best.selected.map(({e,start,end})=>({
-    id:plainText(e.id,100),title:plainText(e.title,90),
-    location:plainText(e.location,65),teacher:plainText(e.teacher,75),
-    start:new Date(start+shift).toISOString(),
-    end:new Date(end+shift).toISOString()
-  }));
-  const model=buildRollingDays({
-    lastCheck:state.lastCheck,
-    semesters:{preview:{events}}
-  },previewAt);
-  return {...model,previewTerm:src.term,
-    previewSourceWeek:new Date(best.monday+BEIJING).toISOString().slice(0,10)};
-}
 // Show the current/next class together when today contains several classes.
 // Earlier completed classes remain in cache, but are not counted in "+N节课".
 export function selectTodayPair(day){
@@ -302,64 +235,8 @@ export function selectTodayColumns(day,maxFuture=1){
     hiddenAfter:Math.max(0,future.length-count)};
 }
 
-// TEMPORARY WIDGET-ONLY DEMO: four invented courses on each of
-// yesterday, today and tomorrow. The real timetable and calendar sync are
-// never changed. widget.tsx decides whether to display this projection.
-export function buildSamplePreview(now=Date.now()){
-  const at=now instanceof Date?now.getTime():Number(now);
-  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
-  const local=new Date(at+BEIJING);
-  const todayStart=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),
-    local.getUTCDate())-BEIJING;
-  const days=[
-    [
-      ['微观经济学','德业楼 Z3-203','王老师','08:30','10:05'],
-      ['统计学原理','德业楼 Z3-205','陈老师','10:20','11:55'],
-      ['公司金融','德业楼 Z4-102','刘老师','14:00','15:35'],
-      ['金融市场学','德业楼 Z4-106','李老师','15:50','17:25']
-    ],
-    [
-      ['财务会计学','德业楼 Z4-110','张老师','08:30','10:05'],
-      ['金融计量学（双语）','德业楼 Z4-201','高老师','10:20','11:55'],
-      ['国际经济与贸易专题','德业楼 Z4-305','吴老师','14:00','15:35'],
-      ['商业数据分析','德业楼 Z4-308','郑老师','15:50','17:25']
-    ],
-    [
-      ['管理学原理','教学楼 B201','孙老师','08:30','10:05'],
-      ['经济法','教学楼 B302','赵老师','10:20','11:55'],
-      ['证券投资学','教学楼 B408','周老师','14:00','15:35'],
-      ['金融风险管理','教学楼 B410','黄老师','15:50','17:25']
-    ]
-  ];
-  const toOffset=clock=>{
-    const [hour,minute]=clock.split(':').map(Number);
-    return hour*HOUR+minute*60000;
-  };
-  const events=days.flatMap((courses,index)=>courses.map((course,courseIndex)=>{
-    const [title,location,teacher,start,end]=course;
-    const dayStart=todayStart+(index-1)*DAY;
-    return {
-      id:'widget-demo-'+index+'-'+courseIndex,title,location,teacher,
-      start:new Date(dayStart+toOffset(start)).toISOString(),
-      end:new Date(dayStart+toOffset(end)).toISOString()
-    };
-  }));
-  // Pin demonstration time to 10:45 Beijing: the first class is finished,
-  // the second is in progress, and the third/fourth are still upcoming.
-  const previewAt=todayStart+10*HOUR+45*60000;
-  const model=buildRollingDays({
-    lastCheck:new Date(at).toISOString(),semesters:{demo:{events}}
-  },previewAt);
-  // Schedule the next widget refresh using real time, not the pinned
-  // demo clock (which may already have passed when opened in the evening).
-  return {...model,at,nextAt:todayStart+DAY,updated:at,
-    previewTerm:'sample-4x3'};
-}
-
 export function buildWidgetModel(state,now=Date.now()){
-  return WIDGET_PREVIEW_TERM
-    ?buildHistoricalPreview(state,now)
-    :buildRollingDays(state,now);
+  return buildRollingDays(state,now);
 }
 
 export function widgetReloadDate(model){
