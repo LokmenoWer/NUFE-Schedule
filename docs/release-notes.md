@@ -4,8 +4,8 @@
 
 **安装：** 下载下方的 `CourseSync.zip`，使用 iOS [Scripting](https://scriptingapp.github.io/) 导入，按提示完成授权和学校登录。
 
-**使用与更新：** [查看用户指南](https://github.com/b7f2d/NUFE-Schedule#用户指南)。
+**使用与更新：** [查看用户指南](https://github.com/b7f2d/CourseSync#用户指南)。
 
 > 非官方项目。请使用独立的专用日历，并在首次同步后核对课程信息。自动执行受 iOS 后台运行限制。
 
-> 名称更新：用户界面显示 CourseSync；为兼容已有安装，脚本内部标识与稳定版 ZIP 文件名现均为 `CourseSync`。
+> 更名说明：Scripting 脚本名称、GitHub 仓库和稳定版 ZIP 文件名均为 `CourseSync`。老版本数据会在首次运行时尝试安全迁移；请核对后再停用旧项目。
