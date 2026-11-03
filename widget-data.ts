@@ -300,17 +300,20 @@ export function buildSamplePreview(now=Date.now()){
     [
       ['微观经济学','德业楼 Z3-203','王老师','08:30','10:05'],
       ['统计学原理','德业楼 Z3-205','陈老师','10:20','11:55'],
-      ['公司金融','德业楼 Z4-102','刘老师','14:00','15:35']
+      ['公司金融','德业楼 Z4-102','刘老师','14:00','15:35'],
+      ['金融市场学','德业楼 Z4-106','李老师','15:50','17:25']
     ],
     [
       ['财务会计学','德业楼 Z4-110','张老师','08:30','10:05'],
       ['金融计量学（双语）','德业楼 Z4-201','高老师','10:20','11:55'],
-      ['国际经济与贸易专题','德业楼 Z4-305','吴老师','14:00','15:35']
+      ['国际经济与贸易专题','德业楼 Z4-305','吴老师','14:00','15:35'],
+      ['商业数据分析','德业楼 Z4-308','郑老师','15:50','17:25']
     ],
     [
       ['管理学原理','教学楼 B201','孙老师','08:30','10:05'],
       ['经济法','教学楼 B302','赵老师','10:20','11:55'],
-      ['证券投资学','教学楼 B408','周老师','14:00','15:35']
+      ['证券投资学','教学楼 B408','周老师','14:00','15:35'],
+      ['金融风险管理','教学楼 B410','黄老师','15:50','17:25']
     ]
   ];
   const toOffset=clock=>{
@@ -326,16 +329,16 @@ export function buildSamplePreview(now=Date.now()){
       end:new Date(dayStart+toOffset(end)).toISOString()
     };
   }));
-  // Pin demo status to 09:00 Beijing so today always shows the current
-  // lesson, its next lesson, and "+1节课" regardless of the actual time.
-  const previewAt=todayStart+9*HOUR;
+  // Pin demonstration time to 10:45 Beijing: the first class is finished,
+  // the second is in progress, and the third/fourth are still upcoming.
+  const previewAt=todayStart+10*HOUR+45*60000;
   const model=buildRollingDays({
     lastCheck:new Date(at).toISOString(),semesters:{demo:{events}}
   },previewAt);
   // Schedule the next widget refresh using real time, not the pinned
   // demo clock (which may already have passed when opened in the evening).
   return {...model,at,nextAt:todayStart+DAY,updated:at,
-    previewTerm:'sample-3x3'};
+    previewTerm:'sample-4x3'};
 }
 
 export function buildWidgetModel(state,now=Date.now()){
