@@ -4,12 +4,12 @@
 
 - 用状态式算法分割合并的 Set-Cookie 头，兼容 Expires 日期中的逗号及带引号的值；不改变 Cookie 域名白名单和本地存储。
 - 新增不依赖 Scripting 模拟宿主的 Cookie / 日历 Diff 纯逻辑测试，原模拟测试继续保留。
-- GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `NUFE-Schedule.zip`，不需要创建新版本号或新 Release。
-- 可运行 `bash scripts/package.sh` 生成 `dist/NUFE-Schedule.zip`。
+- GitHub Actions 在 PR 和 main 自动测试；每次 `main` 提交后，测试通过就更新唯一的稳定 Release 中的 `CourseSync.zip`，不需要创建新版本号或新 Release。
+- 可运行 `bash scripts/package.sh` 生成 `dist/CourseSync.zip`。
 
 ## 发布机制与兼容性
 
-唯一安装包下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/NUFE-Schedule.zip`。仓库根目录不再跟踪 ZIP，旧 Raw 路径不再维护，请统一从 Release 安装和更新。每次 `main` 成功通过测试并发布 ZIP 后，将固定 `stable` 标签更新到该次主分支提交，使 Release 页面自动生成的 Source code 压缩包与成功发布的代码版本保持一致；未通过测试时不更新标签或安装包。Release 标题始终为 `CourseSync`，发行说明统一维护在 `docs/release-notes.md`。为防止并发发布回退，过时的工作流运行会跳过发布。
+唯一安装包下载地址为 `https://github.com/b7f2d/NUFE-Schedule/releases/download/stable/CourseSync.zip`。仓库根目录不再跟踪 ZIP，旧 Raw 路径不再维护，请统一从 Release 安装和更新。每次 `main` 成功通过测试并发布 ZIP 后，将固定 `stable` 标签更新到该次主分支提交，使 Release 页面自动生成的 Source code 压缩包与成功发布的代码版本保持一致；未通过测试时不更新标签或安装包。Release 标题始终为 `CourseSync`，发行说明统一维护在 `docs/release-notes.md`。为防止并发发布回退，过时的工作流运行会跳过发布。
 
 ## 技术评估与后续改进方向
 
