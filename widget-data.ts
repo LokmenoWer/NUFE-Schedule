@@ -3,21 +3,25 @@
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
 const BEIJING = 8 * HOUR;
-const STATE_DIR = 'NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
+const STATE_DIR = 'CourseSync/CourseSync-v2';
+const LEGACY_STATE_DIR = 'NUFE-Local-Scripting/NUFE-Local-Scripting-v2';
 const NAMES = ['一','二','三','四','五','六','日'];
 
 // Read the shared snapshots exactly as the sync engine does. Avoid a hard
 // dependency on statSync: file metadata isn't necessary to parse our own JSON,
 // and unsupported/failed metadata calls used to mask readable caches.
-const MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
+const MIRROR_KEY='CourseSync.Widget.Courses.v1';
+const LEGACY_MIRROR_KEY='NUFE.Schedule.Widget.Courses.v1';
 // Storage is private to the NUFE-Schedule project (no shared:true). The
 // widget can use it even when the extension does not expose a FileManager
 // App Group root. The legacy file reader is a fallback for existing installs.
 export function readWidgetMirror(storage){
   if(!storage||typeof storage.get!=='function')return {kind:'empty',code:'STORAGE_UNAVAILABLE'};
   let obj;
-  try{obj=storage.get(MIRROR_KEY);}
-  catch(_){return {kind:'invalid',code:'STORAGE_READ'};}
+  try{
+    obj=storage.get(MIRROR_KEY);
+    if(obj==null)obj=storage.get(LEGACY_MIRROR_KEY);
+  }catch(_){return {kind:'invalid',code:'STORAGE_READ'};}
   if(obj==null)return {kind:'empty',code:'STORAGE_EMPTY'};
   if(!obj||obj.version!==1||!Array.isArray(obj.events)||
      obj.events.length>400||typeof obj.lastCheck!=='string')
@@ -56,9 +60,13 @@ export function loadWidgetState(files) {
     if(typeof root!=='string'||!root) return {kind:'invalid',code:'GROUP_PATH'};
     root = root.replace(/\\/g,'/').replace(/\/$/,'');
   }catch(_){return {kind:'invalid',code:'GROUP_PATH'};}
-  const dir = root + '/' + STATE_DIR;
-  try {
-    if(!files.existsSync(dir)) return {kind:'empty',code:'NO_CACHE_DIR'};
+  let dir = root + '/' + STATE_DIR;
+  try{
+    if(!files.existsSync(dir)){
+      const legacy=root+'/'+LEGACY_STATE_DIR;
+      if(!files.existsSync(legacy))return {kind:'empty',code:'NO_CACHE_DIR'};
+      dir=legacy;
+    }
   }catch(_){return {kind:'invalid',code:'CACHE_ACCESS'};}
   let names;
   try {
