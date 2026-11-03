@@ -1,9 +1,9 @@
 {
-  "name": "NUFE-Schedule",
+  "name": "CourseSync",
   "version": "0.0.0",
   "icon": "calendar",
   "color": "#2456A6",
-  "description": "CourseSync: local timetable synchronization with Apple Calendar and Shortcuts.",
+  "description": "CourseSync：本地同步课程至 Apple 日历，支持快捷指令自动更新。",
   "localizedNames": {
     "en": "CourseSync",
     "zh": "CourseSync",
