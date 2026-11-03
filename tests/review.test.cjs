@@ -878,10 +878,12 @@ test('background sync after deliberate logout makes no school request or extra n
  a.equal(e.store.read().calendarId,e.calendar.identifier);
  a.match(e.sandbox.output,/已退出登录/);
 });
-test('project metadata uses stable NUFE-Schedule branding',()=>{
+test('project display name is CourseSync while stable internal identity is retained',()=>{
  const project=JSON.parse(fs.readFileSync(__dirname+'/../script.json','utf8'));
  a.equal(project.name,'NUFE-Schedule');
- a.match(project.description,/NUFE/);
+ a.match(project.description,/CourseSync/);
+ a.equal(project.localizedNames.en,'CourseSync');
+ a.equal(project.localizedNames.zh,'CourseSync');
 });
 test('source omits obsolete school name and supports existing calendar aliases',()=>{
  const oldName=String.fromCharCode(0x5357,0x8d22);
