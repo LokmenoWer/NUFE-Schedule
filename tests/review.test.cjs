@@ -147,27 +147,26 @@ test('widget mirror publishes only non-sensitive verified course fields',async()
  a.equal(saved.events[0].teacher,'张老师');
  a.doesNotMatch(JSON.stringify(saved),/SENSITIVE|password|owner|calendarId|Cookie/);
 });
-test('widget cache mirrors only verified 2024-2025-2 past lessons as separate preview',async()=>{
- const e=await env();
- const now=Date.parse('2026-11-02T08:00:00Z');
- e.baseline([lesson({id:'real',start:'2026-11-03T02:00:00Z',end:'2026-11-03T03:30:00Z'})]);
- e.state.semesters.historical={
-   name:'2024-2025-2',lastSuccess:'2025-06-15T08:00:00Z',
-   events:[
-     lesson({id:'old1',start:'2025-04-08T05:30:00Z',end:'2025-04-08T06:55:00Z'}),
-     lesson({id:'old2',start:'2025-04-08T07:10:00Z',end:'2025-04-08T08:35:00Z'})
-   ]
- };
- e.state.lastCheck='2026-11-02T07:00:00Z';
- const previous=JSON.stringify(e.state);
- a.equal(e.m.publishWidgetCache(e.state,now),true);
- const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
- a.equal(saved.events.length,1);
- a.equal(saved.preview.term,'2024-2025-2');
- a.equal(saved.preview.events.length,2);
- a.equal(saved.preview.events[0].start,'2025-04-08T05:30:00Z');
- a.equal(JSON.stringify(e.state),previous);
- a.doesNotMatch(JSON.stringify(saved),/password|cookie|calendarId/);
+test('widget cache contains only current-window real lessons, never historical preview',async()=>{
+  const e=await env();
+  const now=Date.parse('2026-11-02T08:00:00Z');
+  e.baseline([lesson({id:'real',start:'2026-11-03T02:00:00Z',end:'2026-11-03T03:30:00Z'})]);
+  e.state.semesters.historical={
+    name:'2024-2025-2',lastSuccess:'2025-06-15T08:00:00Z',
+    events:[
+      lesson({id:'old1',start:'2025-04-08T05:30:00Z',end:'2025-04-08T06:55:00Z'}),
+      lesson({id:'old2',start:'2025-04-08T07:10:00Z',end:'2025-04-08T08:35:00Z'})
+    ]
+  };
+  e.state.lastCheck='2026-11-02T07:00:00Z';
+  const previous=JSON.stringify(e.state);
+  a.equal(e.m.publishWidgetCache(e.state,now),true);
+  const saved=e.widgetRecords.get('NUFE.Schedule.Widget.Courses.v1');
+  a.equal(saved.events.length,1);
+  a.equal(saved.events[0].id,'real');
+  a.deepEqual(Object.keys(saved).sort(),['events','lastCheck','version']);
+  a.equal(JSON.stringify(e.state),previous);
+  a.doesNotMatch(JSON.stringify(saved),/old1|old2|password|cookie|calendarId/);
 });
 test('widget mirror blocks unverified transactions, filters old semesters, and keeps calendar sync independent',async()=>{
  const e=await env();
