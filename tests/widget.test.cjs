@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(__dirname+'/../widget-data.ts','utf8');
 const core=vm.runInNewContext(
   source.replace(/export function /g,'function ')+
-  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,buildHistoricalPreview,buildSamplePreview,selectVisibleCourses,selectTodayPair,selectTodayColumns,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
+  '\n({loadWidgetState,readWidgetMirror,loadBestWidgetState,weekStartBeijing,buildWeek,buildRollingDays,selectVisibleCourses,selectTodayPair,selectTodayColumns,buildWidgetModel,widgetReloadDate,formatWeekLabel})',
   {Date,Math,Number,String,Object,Array,RegExp,Error}
 );
 const date=(s)=>Date.parse(s);
@@ -274,43 +274,37 @@ test('renderer measures actual widget geometry, omits overflow-prone footer and 
  a.doesNotMatch(ui,/Widget\.displaySize/);
  a.doesNotMatch(ui,/下课后变灰 · 上课中高亮/);
 });
-test('temporary demo shows four invented courses per day and second class active',()=>{
-  const now=date('2026-11-03T14:20:00Z'); // Tuesday night in Beijing
-  const demo=core.buildSamplePreview(now);
-  a.equal(demo.previewTerm,'sample-4x3');
-  a.deepEqual(Array.from(demo.days,x=>x.label),['昨天','今天','明天']);
-  a.deepEqual(Array.from(demo.days,x=>x.courses.length),[4,4,4]);
-  a.equal(demo.courses.length,12);
-  a.ok(demo.days[0].courses.every(x=>x.status==='done'));
-  a.deepEqual(Array.from(demo.days[1].courses,x=>x.status),
+test('production widget maps actual synced courses without invented timetable',()=>{
+  const now=date('2026-11-03T02:45:00Z'); // Tuesday 10:45 Beijing
+  const state=make([
+    ev('mon1','周一原课程','2026-11-02T00:30:00Z','2026-11-02T02:05:00Z'),
+    ev('tue1','第一节真实课程','2026-11-03T00:30:00Z','2026-11-03T02:05:00Z'),
+    ev('tue2','第二节真实课程','2026-11-03T02:20:00Z','2026-11-03T03:55:00Z'),
+    ev('tue3','第三节真实课程','2026-11-03T06:00:00Z','2026-11-03T07:35:00Z'),
+    ev('tue4','第四节真实课程','2026-11-03T07:50:00Z','2026-11-03T09:25:00Z'),
+    ev('wed1','周三原课程','2026-11-04T00:30:00Z','2026-11-04T02:05:00Z')
+  ]);
+  const model=core.buildWidgetModel(state,now);
+  a.deepEqual(Array.from(model.days,d=>d.label),['昨天','今天','明天']);
+  a.deepEqual(Array.from(model.days,d=>d.courses.length),[1,4,1]);
+  a.equal(model.days[0].courses[0].title,'周一原课程');
+  a.equal(model.days[2].courses[0].title,'周三原课程');
+  a.deepEqual(Array.from(model.days[1].courses,c=>c.status),
     ['done','current','upcoming','upcoming']);
-  a.ok(demo.days[2].courses.every(x=>x.status==='upcoming'));
-  a.deepEqual(Array.from(core.selectTodayPair(demo.days[1]).courses,x=>x.title),
-    ['金融计量学（双语）','国际经济与贸易专题']);
-  a.equal(core.selectTodayPair(demo.days[1]).hiddenAfter,1);
-  a.equal(core.selectVisibleCourses(demo.days[0],1).hiddenAfter,3);
-  a.equal(core.selectVisibleCourses(demo.days[2],2).hiddenAfter,2);
-  a.equal(demo.at,now);
-  a.equal(demo.nextAt,date('2026-11-03T16:00:00Z'));
-  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
-  a.match(ui,/const SHOW_SAMPLE_COURSES=true/);
-  a.ok(ui.includes('buildSamplePreview(Date.now())'));
-});
-
-test('today columns keep only current lesson left and stack future classes right',()=>{
-  const sample=core.buildSamplePreview(date('2026-11-03T14:20:00Z'));
-  const day=sample.days[1];
-  const large=core.selectTodayColumns(day,3);
-  a.equal(large.focus.title,'金融计量学（双语）');
-  a.deepEqual(Array.from(large.future,c=>c.title),[
-    '国际经济与贸易专题','商业数据分析']);
+  a.equal(model.at,now);
+  a.equal(model.previewTerm,undefined);
+  const large=core.selectTodayColumns(model.days[1],3);
+  a.equal(large.focus.title,'第二节真实课程');
+  a.deepEqual(Array.from(large.future,c=>c.title),
+    ['第三节真实课程','第四节真实课程']);
   a.equal(large.hiddenAfter,0);
-  a.ok(large.future.every(c=>c.status==='upcoming'));
-  a.ok(!large.future.some(c=>c.title==='财务会计学'));
-  const medium=core.selectTodayColumns(day,1);
-  a.equal(medium.focus.title,'金融计量学（双语）');
-  a.deepEqual(Array.from(medium.future,c=>c.title),['国际经济与贸易专题']);
+  const medium=core.selectTodayColumns(model.days[1],1);
+  a.deepEqual(Array.from(medium.future,c=>c.title),['第三节真实课程']);
   a.equal(medium.hiddenAfter,1);
+  const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
+  a.ok(ui.includes('buildWidgetModel(snapshot.state,Date.now())'));
+  a.ok(!ui.includes('SHOW_SAMPLE_COURSES'));
+  a.ok(!ui.includes('buildSamplePreview'));
 });
 
 test('today columns handle first lesson, a gap, last lesson and all finished',()=>{
@@ -345,49 +339,6 @@ test('large today layout has one focus card on the left, future stack on the rig
   a.ok(ui.includes('columns.hiddenAfter>0'));
   a.ok(!ui.includes('course={visible[0]}'));
   a.ok(!ui.includes('course={visible[2]}'));
-});
-
-test('historical preview uses the same three-day window and original weekdays',()=>{
- const now=date('2026-11-03T14:13:00Z');
- const original=[
-  ev('m1','证券投资学','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
-  ev('m2','毛泽东思想和中国特色社会主义理论体系概论','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
-  ev('m3','Python大数据分析','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z'),
-  ev('m4','Python大数据分析','2025-03-03T07:15:00Z','2025-03-03T08:50:00Z'),
-  ev('t1','大学语文','2025-03-04T05:30:00Z','2025-03-04T07:05:00Z'),
-  ev('w1','中级财务会计','2025-03-05T02:15:00Z','2025-03-05T03:55:00Z'),
-  ev('wrong-week','不应混入其他周','2025-03-10T00:20:00Z','2025-03-10T02:00:00Z')
- ];
- original[0].teacher='高老师';
- const state={lastCheck:'2026-11-02T06:00:00Z',
-   preview:{term:'2024-2025-2',events:original},semesters:{live:{events:[]}}};
- const model=core.buildHistoricalPreview(state,now);
- a.equal(model.previewTerm,'2024-2025-2');
- a.equal(model.previewSourceWeek,'2025-03-03');
- a.deepEqual(Array.from(model.days,x=>x.label),['昨天','今天','明天']);
- a.equal(model.days[0].courses.length,0);
- a.equal(model.days[1].courses.length,4);
- a.equal(model.days[1].courses[0].title,'证券投资学');
- a.equal(model.days[1].courses[0].status,'current');
- a.equal(model.days[1].courses[0].teacher,'高老师');
- const focus=core.selectTodayPair(model.days[1]);
- a.deepEqual(Array.from(focus.courses,x=>x.title),['证券投资学','毛泽东思想和中国特色社会主义理论体系概论']);
- a.equal(focus.hiddenAfter,2);
- a.equal(model.days[2].courses[0].title,'大学语文');
- a.equal(model.courses.length,5);
- a.equal(new Date(model.at+8*3600000).toISOString().slice(11,16),'09:00');
-});
-test('preview retains real weekday course ordering but does not use the late-night live clock',()=>{
- const now=date('2026-11-02T14:13:00Z'); // Monday 22:13
- const state={preview:{term:'2024-2025-2',events:[
-   ev('a','第一节','2025-03-03T00:20:00Z','2025-03-03T02:00:00Z'),
-   ev('b','第二节','2025-03-03T02:15:00Z','2025-03-03T03:55:00Z'),
-   ev('c','第三节','2025-03-03T05:30:00Z','2025-03-03T07:05:00Z')
- ]},semesters:{live:{events:[]}}};
- const m=core.buildHistoricalPreview(state,now);
- a.equal(m.days[1].courses.length,3);
- a.deepEqual(Array.from(core.selectTodayPair(m.days[1]).courses,x=>x.title),['第一节','第二节']);
- a.equal(core.selectTodayPair(m.days[1]).hiddenAfter,1);
 });
 
 test('single visible today lesson gets large text and three equal day widths',()=>{
@@ -440,40 +391,34 @@ test('today pair advances after each class ends and keeps upcoming classes order
  classes[2].status='done';
  a.deepEqual(pick(),['第三节']);
 });
-test('live widget restores real data and ignores all preview payloads',()=>{
- const now=date('2026-11-03T06:10:00Z');
- const live=make([ev('real','当期课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
- const original=core.buildWidgetModel(live,now);
- a.equal(original.days[1].courses[0].title,'当期课程');
- a.equal(original.days[1].courses[0].status,'current');
- a.equal(original.at,now);
- a.equal(original.previewTerm,undefined);
- live.preview={term:'2024-2025-2',events:[
-   ev('past','历史学期','2025-03-03T05:30:00Z','2025-03-03T06:55:00Z')
- ]};
- const withPreview=core.buildWidgetModel(live,now);
- a.deepEqual(Array.from(withPreview.days[1].courses,x=>x.title),['当期课程']);
- a.equal(withPreview.at,now);
- a.equal(withPreview.previewTerm,undefined);
- const sourceOnly={preview:live.preview,semesters:{live:{events:[]}}};
- a.equal(core.buildWidgetModel(sourceOnly,now).days[1].courses.length,0);
+test('production widget always ignores old preview payloads',()=>{
+  const now=date('2026-11-03T06:10:00Z');
+  const live=make([ev('real','当期课程','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')]);
+  const original=core.buildWidgetModel(live,now);
+  a.equal(original.days[1].courses[0].title,'当期课程');
+  a.equal(original.days[1].courses[0].status,'current');
+  a.equal(original.at,now);
+  live.preview={term:'2024-2025-2',events:[
+    ev('past','历史学期','2025-03-03T05:30:00Z','2025-03-03T06:55:00Z')
+  ]};
+  const withPreview=core.buildWidgetModel(live,now);
+  a.deepEqual(Array.from(withPreview.days[1].courses,x=>x.title),['当期课程']);
+  a.equal(withPreview.previewTerm,undefined);
+  a.equal(core.buildWidgetModel({preview:live.preview,semesters:{live:{events:[]}}},now)
+    .days[1].courses.length,0);
 });
 
-test('private mirror keeps live courses separate from 2024-2025-2 preview',()=>{
- const obj={version:1,lastCheck:'2026-11-02T07:00:00Z',
-   events:[ev('real','真实课表','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')],
-   preview:{term:'2024-2025-2',events:[
-     ev('past','历史学期','2025-04-08T05:30:00Z','2025-04-08T06:55:00Z')
-   ]}
- };
- const result=core.readWidgetMirror({get:()=>obj});
- a.equal(result.kind,'ready');
- a.equal(result.state.semesters.widget.events[0].title,'真实课表');
- a.equal(result.state.preview.events[0].title,'历史学期');
- const prior=core.readWidgetMirror({get:()=>({...obj,preview:{term:'2025-2026-2',events:obj.preview.events}})});
- a.equal(prior.kind,'ready'); // Old test mode is not a corrupt live cache.
- a.equal(prior.state.preview,null);
+test('private mirror reads real events and ignores legacy preview fields',()=>{
+  const obj={version:1,lastCheck:'2026-11-02T07:00:00Z',
+    events:[ev('real','真实课表','2026-11-03T05:30:00Z','2026-11-03T06:55:00Z')],
+    preview:{term:'2024-2025-2',events:[{invalid:'legacy-data'}]}
+  };
+  const result=core.readWidgetMirror({get:()=>obj});
+  a.equal(result.kind,'ready');
+  a.equal(result.state.semesters.widget.events[0].title,'真实课表');
+  a.equal(Object.hasOwn(result.state,'preview'),false);
 });
+
 test('widget labels only dates and useful class details, not redundant auto-update or status copy',()=>{
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.doesNotMatch(ui,/近日课表|自动更新|● 上课中|今日已结束|下一节|今日课程/);
