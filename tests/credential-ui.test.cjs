@@ -31,6 +31,9 @@ test('native iOS credential sheet has both autofill fields and no WebView',()=>{
 
 test('manual refresh is a single native two-step interface then account wizard',()=>{
  assert.match(native,/export async function presentNativeRefreshForm/);
+ assert.doesNotMatch(native,/南京财经大学|南财|NUFE/);
+ assert.match(native,/<Section header=\{<Text>默认接口<\/Text>\}/);
+ assert.match(native,/全部留空即使用内置的默认接口地址/);
  assert.match(native,/function RefreshSetupView/);
  assert.match(native,/useState<'endpoints'\|'account'>\('endpoints'\)/);
  assert.match(native,/title="统一认证根地址"/);
