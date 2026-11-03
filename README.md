@@ -22,19 +22,13 @@
 
 1. 在 iPhone 安装并打开 [Scripting](https://scriptingapp.github.io/)，点击右上角「＋」，选择「导入远程脚本」。
 
-   <a href="docs/images/scripting-import-menu.webp"><img src="docs/images/scripting-import-menu.webp" alt="Scripting 导入远程脚本入口" width="330"></a>
-
 2. 粘贴以下 **稳定版 Release ZIP** 地址并导入，**不要使用 GitHub 仓库源码 ZIP**。
 
    ```text
    https://github.com/b7f2d/CourseSync/releases/download/stable/CourseSync.zip
    ```
 
-   <a href="docs/images/scripting-remote-zip.webp"><img src="docs/images/scripting-remote-zip.webp" alt="输入远程 ZIP 下载地址" width="330"></a>
-
 3. 返回 Scripting 主界面，点击 **CourseSync 项目卡片**运行。
-
-   <a href="docs/images/scripting-project-card.webp"><img src="docs/images/scripting-project-card.webp" alt="Scripting 项目卡片（截图可能显示旧名称）" width="330"></a>
 
 ### 2. 首次同步
 
@@ -65,8 +59,6 @@
 2. 添加 Scripting 的运行脚本操作，选择 CourseSync，设置为「立即运行」。
 3. 保存后手动测试一次。
 
-<a href="docs/images/shortcuts-automation.webp"><img src="docs/images/shortcuts-automation.webp" alt="通过快捷指令定时运行课表脚本（旧版截图）" width="330"></a>
-
 后台自动化不会弹出输入窗口；如果学校要求手动验证，需在 Scripting 前台完成。iOS 也可能延迟或跳过部分后台任务。
 
 ### 5. 日常操作与更新
@@ -77,7 +69,5 @@
 - **退出登录**（已登录时显示）：清除本机学校 Cookie 和 CourseSync 保存的自动登录凭据，**保留课表及 Apple 日历**。下次点击「立即刷新」会重新登录；iOS「密码」App 中原有的学校网站密码不受影响。
 
 **更新项目**：在 Scripting 主界面点击 CourseSync 卡片右上角「···」→「远程资源」→「立即更新」，不需要重新导入项目或创建日历。
-
-<a href="docs/images/scripting-refresh-menu.webp"><img src="docs/images/scripting-refresh-menu.webp" alt="在远程资源页面手动更新项目" width="330"></a>
 
 遇到小组件内容未更新、会话过期或同步异常时，先检查项目是否为最新版本，再打开「运行状态」查看诊断信息。反馈问题时请提供错误代码和脱敏截图，**不要公开学号、密码或 Cookie**。
