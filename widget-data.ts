@@ -287,6 +287,57 @@ export function selectTodayPair(day){
   return {courses:shown,hiddenAfter:Math.max(0,courses.length-at-shown.length)};
 }
 
+// TEMPORARY WIDGET-ONLY DEMO: three invented courses on each of
+// yesterday, today and tomorrow. The real timetable and calendar sync are
+// never changed. widget.tsx decides whether to display this projection.
+export function buildSamplePreview(now=Date.now()){
+  const at=now instanceof Date?now.getTime():Number(now);
+  if(!Number.isFinite(at))throw Error('WIDGET_TIME');
+  const local=new Date(at+BEIJING);
+  const todayStart=Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),
+    local.getUTCDate())-BEIJING;
+  const days=[
+    [
+      ['微观经济学','德业楼 Z3-203','王老师','08:30','10:05'],
+      ['统计学原理','德业楼 Z3-205','陈老师','10:20','11:55'],
+      ['公司金融','德业楼 Z4-102','刘老师','14:00','15:35']
+    ],
+    [
+      ['财务会计学','德业楼 Z4-110','张老师','08:30','10:05'],
+      ['金融计量学（双语）','德业楼 Z4-201','高老师','10:20','11:55'],
+      ['国际经济与贸易专题','德业楼 Z4-305','吴老师','14:00','15:35']
+    ],
+    [
+      ['管理学原理','教学楼 B201','孙老师','08:30','10:05'],
+      ['经济法','教学楼 B302','赵老师','10:20','11:55'],
+      ['证券投资学','教学楼 B408','周老师','14:00','15:35']
+    ]
+  ];
+  const toOffset=clock=>{
+    const [hour,minute]=clock.split(':').map(Number);
+    return hour*HOUR+minute*60000;
+  };
+  const events=days.flatMap((courses,index)=>courses.map((course,courseIndex)=>{
+    const [title,location,teacher,start,end]=course;
+    const dayStart=todayStart+(index-1)*DAY;
+    return {
+      id:'widget-demo-'+index+'-'+courseIndex,title,location,teacher,
+      start:new Date(dayStart+toOffset(start)).toISOString(),
+      end:new Date(dayStart+toOffset(end)).toISOString()
+    };
+  }));
+  // Pin demo status to 09:00 Beijing so today always shows the current
+  // lesson, its next lesson, and "+1节课" regardless of the actual time.
+  const previewAt=todayStart+9*HOUR;
+  const model=buildRollingDays({
+    lastCheck:new Date(at).toISOString(),semesters:{demo:{events}}
+  },previewAt);
+  // Schedule the next widget refresh using real time, not the pinned
+  // demo clock (which may already have passed when opened in the evening).
+  return {...model,at,nextAt:todayStart+DAY,updated:at,
+    previewTerm:'sample-3x3'};
+}
+
 export function buildWidgetModel(state,now=Date.now()){
   return WIDGET_PREVIEW_TERM
     ?buildHistoricalPreview(state,now)
