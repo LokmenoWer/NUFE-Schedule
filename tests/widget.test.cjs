@@ -292,7 +292,7 @@ test('temporary demo shows three invented courses per day without changing live 
   a.equal(demo.nextAt,date('2026-11-03T16:00:00Z'));
   const ui=fs.readFileSync(__dirname+'/../widget.tsx','utf8');
   a.match(ui,/const SHOW_SAMPLE_COURSES=true/);
-  a.match(ui,/buildSamplePreview\\(Date\\.now\\(\\)\\)/);
+  a.ok(ui.includes('buildSamplePreview(Date.now())'));
 });
 
 test('historical preview uses the same three-day window and original weekdays',()=>{
